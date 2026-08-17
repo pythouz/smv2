@@ -1,8 +1,6 @@
-// Pulse — Decentralized Engine v2.0 (Fixed Publishing & Rooms)
 const RELAYS = ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'];
 const APP_TAG = 'pulse-platform';
 
-// ── 1. Identity Management ──
 let skBytes, pk, npub;
 const storageKey = 'pulse_nsec_hex';
 
@@ -17,7 +15,6 @@ function initIdentity() {
         skBytes = NostrTools.utils.hexToBytes(hexSk);
         pk = NostrTools.getPublicKey(skBytes);
         npub = NostrTools.nip19.npubEncode(pk);
-        
         document.getElementById('npub-display').textContent = npub.slice(0, 8) + '...' + npub.slice(-6);
     } catch (err) {
         console.error("Identity Error:", err);
@@ -25,7 +22,6 @@ function initIdentity() {
     }
 }
 
-// ── 2. Nostr Pool & Feed ──
 const pool = new NostrTools.SimplePool();
 const seenEvents = new Set();
 
@@ -77,7 +73,6 @@ function renderPost(event) {
     container.prepend(div);
 }
 
-// ── 3. Actions (Publish, Like, Reply) - FIXED ──
 async function publishPost() {
     const input = document.getElementById('post-input');
     const content = input.value.trim();
@@ -91,13 +86,10 @@ async function publishPost() {
             content: content
         };
         
-        // التوقيع الصحيح باستخدام finalizeEvent
         const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
-        
         showToast('جاري النشر...', 'info');
         const results = await pool.publish(RELAYS, signedEvent);
         
-        // التحقق من نجاح النشر في Relay واحد على الأقل
         const successCount = Object.values(results).filter(r => r).length;
         if (successCount > 0) {
             input.value = '';
@@ -146,7 +138,6 @@ async function replyToPost(targetId, targetPubkey) {
     }
 }
 
-// ── 4. Voice Rooms (WebRTC + Nostr Signaling) - FIXED ──
 let localStream = null;
 let peer = null;
 let currentRoom = null;
@@ -161,7 +152,6 @@ async function toggleRoom() {
     if (!currentRoom) {
         currentRoom = input.value.trim() || 'general';
         try {
-            // طلب إذن المايكروفون بشكل صريح
             localStream = await navigator.mediaDevices.getUserMedia({ 
                 audio: { echoCancellation: true, noiseSuppression: true } 
             });
@@ -171,7 +161,6 @@ async function toggleRoom() {
         }
 
         try {
-            // تهيئة PeerJS مع خادم عام موثوق
             const myPeerId = 'pulse-' + npub.slice(4, 12);
             peer = new Peer(myPeerId, {
                 host: '0.peerjs.com',
@@ -206,7 +195,6 @@ async function toggleRoom() {
             showToast('فشل تهيئة الغرفة', 'error');
         }
     } else {
-        // Leave Room
         if (roomSub) roomSub.close();
         if (peer) peer.destroy();
         if (localStream) localStream.getTracks().forEach(t => t.stop());
@@ -237,7 +225,7 @@ function listenForPeers() {
         [{ kinds: [1], '#room': [currentRoom], limit: 10 }],
         {
             onevent: (event) => {
-                if (event.pubkey === pk) return; // تجاهل نفسي
+                if (event.pubkey === pk) return;
                 try {
                     const data = JSON.parse(event.content);
                     if (data.peerId && !document.getElementById(`peer-${data.peerId}`)) {
@@ -280,7 +268,6 @@ function toggleMute() {
     btn.classList.toggle('text-red-500', isMuted);
 }
 
-// ── 5. UI Utilities ──
 function switchView(viewName) {
     document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
     document.getElementById(`view-${viewName}`).classList.remove('hidden');
@@ -322,7 +309,6 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ── 6. Boot ──
 document.addEventListener('DOMContentLoaded', () => {
     if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
         document.documentElement.classList.add('dark');
@@ -331,7 +317,6 @@ document.addEventListener('DOMContentLoaded', () => {
     startFeed();
 });
 
-// ── 7. PWA Service Worker Registration ──
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js')
