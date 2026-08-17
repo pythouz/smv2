@@ -2,7 +2,6 @@
 <html lang="ar" dir="rtl">
 
 <head>
-
     <meta charset="UTF-8">
 
     <meta
@@ -25,14 +24,20 @@
         content="default"
     >
 
-    <title>
-        Pulse — منصة المجتمع الحي
-    </title>
+    <title>Pulse — منصة المجتمع الحي</title>
+
+    <!-- =====================================================
+         PWA
+         ===================================================== -->
 
     <link
         rel="manifest"
         href="./manifest.json"
     >
+
+    <!-- =====================================================
+         الخطوط
+         ===================================================== -->
 
     <link
         rel="preconnect"
@@ -44,28 +49,43 @@
         rel="stylesheet"
     >
 
+    <!-- =====================================================
+         Font Awesome
+         ===================================================== -->
+
     <link
         rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
     >
 
-    <!-- Tailwind CDN -->
+    <!-- =====================================================
+         Tailwind CSS CDN
+         ===================================================== -->
+
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- Nostr Tools 2.x -->
+    <!-- =====================================================
+         Nostr Tools 2.x
+         ===================================================== -->
+
     <script src="https://unpkg.com/nostr-tools@2.10.0/lib/nostr.bundle.js"></script>
 
-    <!-- PeerJS -->
+    <!-- =====================================================
+         PeerJS
+         ===================================================== -->
+
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
+
+    <!-- =====================================================
+         إعداد Tailwind
+         ===================================================== -->
+
     <script>
-
         tailwind.config = {
-
             darkMode: 'class',
 
             theme: {
-
                 extend: {
 
                     fontFamily: {
@@ -76,23 +96,21 @@
                     },
 
                     colors: {
-
                         accent: '#FF4D00',
-
                         dark: '#0F0F0F',
-
                         surface: '#1A1A1A',
-
                         bgLight: '#F7F4EF',
-
                         bgDark: '#0b0f19'
                     }
                 }
             }
         };
-
     </script>
 
+
+    <!-- =====================================================
+         CSS إضافي
+         ===================================================== -->
 
     <style>
 
@@ -145,7 +163,6 @@
                 opacity: 1;
                 transform: translateY(0);
             }
-
         }
 
         ::-webkit-scrollbar {
@@ -173,24 +190,43 @@
             transform: scale(0.98);
         }
 
-        .like-btn {
+        /*
+         * تأثير زر الإعجاب في الـ Optimistic UI
+         */
+        .like-button {
             transition:
                 color 0.15s ease,
                 transform 0.15s ease;
         }
 
-        .room-card {
-            transition:
-                transform 0.15s ease,
-                box-shadow 0.15s ease;
+        /*
+         * منع تحديد النص بالخطأ أثناء الضغط
+         * على أزرار الغرفة والمايك.
+         */
+        button {
+            -webkit-tap-highlight-color: transparent;
         }
 
-        .room-card:active {
-            transform: scale(0.98);
+        /*
+         * حاوية الصوت مخفية بصرياً،
+         * لكن عناصر audio بداخلها تظل تعمل.
+         */
+        #audio-container {
+            position: fixed;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            opacity: 0;
+            pointer-events: none;
+            bottom: 0;
+            left: 0;
         }
 
-        audio {
-            display: none;
+        /*
+         * Safe area لأجهزة iPhone
+         */
+        .pb-safe {
+            padding-bottom: env(safe-area-inset-bottom);
         }
 
     </style>
@@ -198,459 +234,481 @@
 </head>
 
 
-<body
-    class="transition-colors duration-300 min-h-screen"
->
+<body class="transition-colors duration-300 min-h-screen">
 
 
-<!-- =====================================================
-     Header
-===================================================== -->
+    <!-- =====================================================
+         HEADER
+         ===================================================== -->
 
-<header
-    class="fixed top-0 w-full z-50 glass border-b border-gray-200/50 dark:border-gray-800/50"
->
-
-    <div
-        class="max-w-2xl mx-auto px-4 py-3 flex justify-between items-center"
+    <header
+        class="fixed top-0 w-full z-50 glass border-b border-gray-200/50 dark:border-gray-800/50"
     >
 
-        <h1
-            class="text-2xl font-black text-accent tracking-tight"
-        >
-            Pulse
-        </h1>
-
         <div
-            class="flex items-center gap-3"
+            class="max-w-2xl mx-auto px-4 py-3 flex justify-between items-center"
         >
 
-            <button
-                onclick="toggleTheme()"
-                class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+            <!-- Logo -->
+
+            <h1
+                class="text-2xl font-black text-accent tracking-tight"
             >
-
-                <i
-                    class="fas fa-moon dark:hidden text-gray-600"
-                ></i>
-
-                <i
-                    class="fas fa-sun hidden dark:block text-yellow-400"
-                ></i>
-
-            </button>
+                Pulse
+            </h1>
 
 
-            <div
-                class="flex items-center gap-2 bg-gray-100 dark:bg-surface px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700"
-            >
+            <!-- معلومات المستخدم -->
+
+            <div class="flex items-center gap-3">
+
+                <!-- زر تغيير الوضع -->
+
+                <button
+                    onclick="toggleTheme()"
+                    class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+                    aria-label="تغيير المظهر"
+                >
+
+                    <i
+                        class="fas fa-moon dark:hidden text-gray-600"
+                    ></i>
+
+                    <i
+                        class="fas fa-sun hidden dark:block text-yellow-400"
+                    ></i>
+
+                </button>
+
+
+                <!-- هوية Nostr -->
 
                 <div
-                    class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
-                ></div>
-
-                <span
-                    id="npub-display"
-                    class="text-xs font-mono text-gray-600 dark:text-gray-300"
+                    class="flex items-center gap-2 bg-gray-100 dark:bg-surface px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700"
                 >
-                    جاري...
-                </span>
+
+                    <div
+                        class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
+                    ></div>
+
+                    <span
+                        id="npub-display"
+                        class="text-xs font-mono text-gray-600 dark:text-gray-300"
+                    >
+                        جاري...
+                    </span>
+
+                </div>
 
             </div>
 
         </div>
 
-    </div>
-
-</header>
+    </header>
 
 
-<!-- =====================================================
-     Main
-===================================================== -->
 
-<main
-    class="max-w-2xl mx-auto pt-20 pb-24 px-4"
->
+    <!-- =====================================================
+         MAIN
+         ===================================================== -->
 
-
-<!-- =====================================================
-     Timeline
-===================================================== -->
-
-<div
-    id="view-timeline"
-    class="view-section fade-in"
->
-
-    <!-- Composer -->
-
-    <div
-        class="bg-white dark:bg-surface rounded-2xl p-4 shadow-sm mb-6 border border-gray-100 dark:border-gray-800"
+    <main
+        class="max-w-2xl mx-auto pt-20 pb-24 px-4"
     >
 
-        <textarea
-            id="post-input"
-            rows="3"
-            placeholder="بماذا تفكر؟ شارك المجتمع..."
-            class="w-full bg-transparent border-none focus:ring-0 text-lg resize-none placeholder-gray-400 dark:text-white"
-        ></textarea>
 
+        <!-- =================================================
+             TIMELINE
+             ================================================= -->
 
         <div
-            class="flex justify-between items-center mt-3 pt-3 border-t border-gray-100 dark:border-gray-800"
+            id="view-timeline"
+            class="view-section fade-in"
         >
 
-            <span
-                class="text-xs text-gray-400"
-            >
-                يتم النشر عبر شبكة Nostr اللامركزية
-            </span>
 
+            <!-- Composer -->
 
-            <button
-                onclick="publishPost()"
-                class="bg-accent hover:bg-orange-600 text-white px-6 py-2 rounded-full font-bold transition transform active:scale-95 shadow-md shadow-orange-500/20"
+            <div
+                class="bg-white dark:bg-surface rounded-2xl p-4 shadow-sm mb-6 border border-gray-100 dark:border-gray-800"
             >
 
-                نشر
+                <textarea
+                    id="post-input"
+                    rows="3"
+                    placeholder="بماذا تفكر؟ شارك المجتمع..."
+                    class="w-full bg-transparent border-none focus:ring-0 text-lg resize-none placeholder-gray-400 dark:text-white"
+                ></textarea>
+
+
+                <div
+                    class="flex justify-between items-center mt-3 pt-3 border-t border-gray-100 dark:border-gray-800"
+                >
+
+                    <span
+                        class="text-xs text-gray-400"
+                    >
+                        يتم النشر عبر شبكة Nostr اللامركزية
+                    </span>
+
+
+                    <button
+                        onclick="publishPost()"
+                        class="bg-accent hover:bg-orange-600 text-white px-6 py-2 rounded-full font-bold transition transform active:scale-95 shadow-md shadow-orange-500/20"
+                    >
+
+                        نشر
+
+                        <i
+                            class="fas fa-paper-plane mr-1"
+                        ></i>
+
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <!-- المنشورات -->
+
+            <div
+                id="feed-container"
+                class="space-y-4"
+            ></div>
+
+
+            <!-- Loading -->
+
+            <div
+                id="loading-feed"
+                class="text-center py-8 text-gray-400"
+            >
 
                 <i
-                    class="fas fa-paper-plane mr-1"
+                    class="fas fa-circle-notch fa-spin text-2xl text-accent"
                 ></i>
 
-            </button>
-
-        </div>
-
-    </div>
-
-
-    <!-- Posts -->
-
-    <div
-        id="feed-container"
-        class="space-y-4"
-    ></div>
-
-
-    <!-- Loader -->
-
-    <div
-        id="loading-feed"
-        class="text-center py-8 text-gray-400"
-    >
-
-        <i
-            class="fas fa-circle-notch fa-spin text-2xl text-accent"
-        ></i>
-
-        <p
-            class="mt-2 text-sm"
-        >
-            جاري تحميل المنشورات من الشبكة...
-        </p>
-
-    </div>
-
-</div>
-
-
-<!-- =====================================================
-     Rooms
-===================================================== -->
-
-<div
-    id="view-rooms"
-    class="view-section hidden fade-in"
->
-
-
-    <!-- Header / Create Room -->
-
-    <div
-        class="bg-gradient-to-br from-accent to-orange-600 rounded-2xl p-6 text-white shadow-lg mb-6"
-    >
-
-        <h2
-            class="text-2xl font-black mb-2"
-        >
-            🎙️ غرف صوتية مباشرة
-        </h2>
-
-        <p
-            class="opacity-90 mb-4 text-sm"
-        >
-            ادخل أي غرفة تريدها وتحدث مع الموجودين
-            مباشرة عبر WebRTC.
-        </p>
-
-
-        <div
-            class="flex gap-2"
-        >
-
-            <input
-                id="room-input"
-                type="text"
-                autocomplete="off"
-                placeholder="اسم الغرفة (مثال: tech)"
-                class="flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500"
-            >
-
-
-            <button
-                id="btn-join-room"
-                onclick="toggleRoom()"
-                class="bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md"
-            >
-                دخول
-            </button>
-
-        </div>
-
-    </div>
-
-
-    <!-- =================================================
-         Available Rooms
-    ================================================== -->
-
-    <div
-        class="mb-6"
-    >
-
-        <div
-            class="flex items-center justify-between mb-3 px-1"
-        >
-
-            <div>
-
-                <h3
-                    class="font-black text-lg dark:text-white"
-                >
-                    الغرف المتاحة
-                </h3>
-
                 <p
-                    class="text-xs text-gray-400 mt-1"
+                    class="mt-2 text-sm"
                 >
-                    اختر الغرفة التي تريد دخولها
+                    جاري تحميل المنشورات من الشبكة...
                 </p>
 
             </div>
 
+        </div>
+
+
+
+        <!-- =================================================
+             ROOMS
+             ================================================= -->
+
+        <div
+            id="view-rooms"
+            class="view-section hidden fade-in"
+        >
+
+
+            <!-- Room Header -->
 
             <div
-                class="flex items-center gap-2 text-xs text-green-500"
+                class="bg-gradient-to-br from-accent to-orange-600 rounded-2xl p-6 text-white shadow-lg mb-6"
             >
+
+                <h2
+                    class="text-2xl font-black mb-2"
+                >
+                    🎙️ غرف صوتية مباشرة
+                </h2>
+
+
+                <p
+                    class="opacity-90 mb-4 text-sm"
+                >
+                    تواصل مع المجتمع صوتياً بشكل لامركزي وآمن عبر WebRTC.
+                </p>
+
+
+                <!-- اختيار الغرفة -->
+
+                <div class="flex gap-2">
+
+                    <input
+                        id="room-input"
+                        type="text"
+                        autocomplete="off"
+                        placeholder="اسم الغرفة (مثال: tech)"
+                        class="flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500"
+                    >
+
+
+                    <button
+                        id="btn-join-room"
+                        onclick="toggleRoom()"
+                        class="bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md"
+                    >
+                        دخول
+                    </button>
+
+                </div>
+
+            </div>
+
+
+
+            <!-- =================================================
+                 الغرفة النشطة
+                 ================================================= -->
+
+            <div
+                id="active-room-ui"
+                class="hidden bg-white dark:bg-surface rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-800 text-center"
+            >
+
+
+                <!-- أيقونة المايك -->
+
+                <div
+                    class="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center mx-auto mb-4"
+                >
+
+                    <i
+                        class="fas fa-microphone text-3xl text-accent animate-pulse"
+                    ></i>
+
+                </div>
+
+
+                <!-- اسم الغرفة -->
+
+                <h3
+                    id="current-room-name"
+                    class="text-xl font-bold mb-1 dark:text-white"
+                >
+                    اسم الغرفة
+                </h3>
+
+
+                <!-- حالة الاتصال -->
+
+                <p
+                    class="text-sm text-gray-400 mb-2"
+                >
+                    أنت متصل الآن. المايكروفون نشط.
+                </p>
+
+
+                <!-- حالة VAD -->
+
+                <p
+                    id="vad-status"
+                    class="text-xs text-gray-400 mb-6"
+                >
+                    الحالة: متصل
+                </p>
+
+
+
+                <!-- =================================================
+                     أزرار التحكم بالصوت
+                     ================================================= -->
+
+                <div
+                    class="flex justify-center gap-4 mb-6"
+                >
+
+
+                    <!-- Mute -->
+
+                    <button
+                        onclick="toggleMute()"
+                        id="btn-mute"
+                        class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition dark:text-white"
+                        aria-label="كتم الميكروفون"
+                    >
+
+                        <i
+                            class="fas fa-microphone"
+                        ></i>
+
+                    </button>
+
+
+                    <!-- Leave -->
+
+                    <button
+                        onclick="toggleRoom()"
+                        class="w-14 h-14 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-xl hover:bg-red-500/20 transition"
+                        aria-label="مغادرة الغرفة"
+                    >
+
+                        <i
+                            class="fas fa-phone-slash"
+                        ></i>
+
+                    </button>
+
+                </div>
+
+
+
+                <!-- =================================================
+                     المشاركون
+                     ================================================= -->
+
+                <div class="text-right">
+
+                    <div
+                        class="flex items-center justify-between mb-2"
+                    >
+
+                        <p
+                            class="text-xs text-gray-400 font-bold"
+                        >
+                            المشاركون في الغرفة:
+                        </p>
+
+                        <span
+                            id="peer-count"
+                            class="text-xs text-gray-400"
+                        >
+                            الأشخاص: 0
+                        </span>
+
+                    </div>
+
+
+                    <div
+                        id="peers-list"
+                        class="space-y-2 text-sm text-gray-600 dark:text-gray-300"
+                    ></div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </main>
+
+
+
+    <!-- =====================================================
+         BOTTOM NAVIGATION
+         ===================================================== -->
+
+    <nav
+        class="fixed bottom-0 w-full glass border-t border-gray-200 dark:border-gray-800 z-50 pb-safe"
+    >
+
+        <div
+            class="max-w-2xl mx-auto flex justify-around py-3"
+        >
+
+
+            <!-- الرئيسية -->
+
+            <button
+                onclick="switchView('timeline')"
+                id="nav-timeline"
+                class="nav-btn active flex flex-col items-center gap-1 text-accent transition"
+            >
+
+                <i
+                    class="fas fa-home text-xl"
+                ></i>
 
                 <span
-                    class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
-                ></span>
-
-                مباشر
-
-            </div>
-
-        </div>
-
-
-        <div
-            id="available-rooms"
-            class="space-y-3"
-        >
-
-            <div
-                class="text-center py-5 text-gray-400 text-sm"
-            >
-
-                جاري البحث عن الغرف النشطة...
-
-            </div>
-
-        </div>
-
-    </div>
-
-
-    <!-- =================================================
-         Active Room
-    ================================================== -->
-
-    <div
-        id="active-room-ui"
-        class="hidden bg-white dark:bg-surface rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-800 text-center"
-    >
-
-        <div
-            class="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center mx-auto mb-4"
-        >
-
-            <i
-                class="fas fa-microphone text-3xl text-accent animate-pulse"
-            ></i>
-
-        </div>
-
-
-        <h3
-            id="current-room-name"
-            class="text-xl font-bold mb-1 dark:text-white"
-        >
-            اسم الغرفة
-        </h3>
-
-
-        <p
-            class="text-sm text-gray-400 mb-6"
-        >
-            أنت متصل الآن. المايكروفون نشط.
-        </p>
-
-
-        <!-- Controls -->
-
-        <div
-            class="flex justify-center gap-4 mb-6"
-        >
-
-            <button
-                onclick="toggleMute()"
-                id="btn-mute"
-                class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition dark:text-white"
-            >
-
-                <i
-                    class="fas fa-microphone"
-                ></i>
+                    class="text-xs font-bold"
+                >
+                    الرئيسية
+                </span>
 
             </button>
 
 
+            <!-- الغرف -->
+
             <button
-                onclick="leaveRoom(true)"
-                class="w-14 h-14 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-xl hover:bg-red-500/20 transition"
+                onclick="switchView('rooms')"
+                id="nav-rooms"
+                class="nav-btn flex flex-col items-center gap-1 text-gray-400 hover:text-accent transition"
             >
 
                 <i
-                    class="fas fa-phone-slash"
+                    class="fas fa-microphone-lines text-xl"
                 ></i>
+
+                <span
+                    class="text-xs font-bold"
+                >
+                    غرف صوتية
+                </span>
 
             </button>
 
         </div>
 
-
-        <!-- Participants -->
-
-        <div
-            class="text-right"
-        >
-
-            <p
-                class="text-xs text-gray-400 mb-2 font-bold"
-            >
-                المشاركون في الغرفة:
-            </p>
+    </nav>
 
 
-            <div
-                id="peers-list"
-                class="space-y-2 text-sm text-gray-600 dark:text-gray-300"
-            ></div>
 
-        </div>
-
-    </div>
-
-</div>
-
-</main>
-
-
-<!-- =====================================================
-     Bottom Navigation
-===================================================== -->
-
-<nav
-    class="fixed bottom-0 w-full glass border-t border-gray-200 dark:border-gray-800 z-50 pb-safe"
->
+    <!-- =====================================================
+         Toast
+         ===================================================== -->
 
     <div
-        class="max-w-2xl mx-auto flex justify-around py-3"
+        id="toast"
+        class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-dark text-white px-6 py-3 rounded-full shadow-xl z-[100] hidden transition-all duration-300 flex items-center gap-2 text-sm"
     >
 
-        <button
-            onclick="switchView('timeline')"
-            id="nav-timeline"
-            class="nav-btn active flex flex-col items-center gap-1 text-accent transition"
+        <i
+            id="toast-icon"
+            class="fas fa-check-circle text-green-400"
+        ></i>
+
+        <span
+            id="toast-msg"
         >
-
-            <i
-                class="fas fa-home text-xl"
-            ></i>
-
-            <span
-                class="text-xs font-bold"
-            >
-                الرئيسية
-            </span>
-
-        </button>
-
-
-        <button
-            onclick="switchView('rooms')"
-            id="nav-rooms"
-            class="nav-btn flex flex-col items-center gap-1 text-gray-400 hover:text-accent transition"
-        >
-
-            <i
-                class="fas fa-microphone-lines text-xl"
-            ></i>
-
-            <span
-                class="text-xs font-bold"
-            >
-                غرف صوتية
-            </span>
-
-        </button>
+            تم بنجاح
+        </span>
 
     </div>
 
-</nav>
 
 
-<!-- =====================================================
-     Toast
-===================================================== -->
+    <!-- =====================================================
+         حاوية Remote Audio
+         
+         مهمة جداً لنظام WebRTC.
+         
+         app.js سيضيف داخلها:
+         
+         <audio
+             id="audio-PEER_ID"
+             autoplay
+             playsinline
+         ></audio>
+         
+         الصوت نفسه لن يظهر بصرياً للمستخدم،
+         لكنه سيعمل من خلال WebRTC.
+         ===================================================== -->
 
-<div
-    id="toast"
-    class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-dark text-white px-6 py-3 rounded-full shadow-xl z-[100] hidden transition-all duration-300 flex items-center gap-2 text-sm"
->
-
-    <i
-        id="toast-icon"
-        class="fas fa-check-circle text-green-400"
-    ></i>
-
-    <span
-        id="toast-msg"
-    >
-        تم بنجاح
-    </span>
-
-</div>
+    <div
+        id="audio-container"
+        aria-hidden="true"
+    ></div>
 
 
-<!-- =====================================================
-     Application
-===================================================== -->
 
-<script src="./app.js"></script>
+    <!-- =====================================================
+         Application
+         ===================================================== -->
+
+    <script src="./app.js"></script>
 
 </body>
+
 </html>
