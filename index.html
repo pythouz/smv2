@@ -150,19 +150,22 @@
             padding-bottom: env(safe-area-inset-bottom);
         }
 
-        /* Modal overlay */
         .modal-overlay {
             background: rgba(0, 0, 0, 0.55);
             backdrop-filter: blur(4px);
+        }
+
+        /* إصلاح حقل الغرفة على الموبايل */
+        #room-input {
+            box-sizing: border-box;
+            min-width: 0;
         }
     </style>
 </head>
 
 <body class="transition-colors duration-300 min-h-screen">
 
-    <!-- =====================================================
-         HEADER
-         ===================================================== -->
+    <!-- HEADER -->
     <header class="fixed top-0 w-full z-50 glass border-b border-gray-200/50 dark:border-gray-800/50">
         <div class="max-w-2xl mx-auto px-4 py-3 flex justify-between items-center">
 
@@ -172,7 +175,6 @@
 
             <div class="flex items-center gap-2">
 
-                <!-- Theme -->
                 <button
                     onclick="toggleTheme()"
                     class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition"
@@ -182,7 +184,6 @@
                     <i class="fas fa-sun hidden dark:block text-yellow-400"></i>
                 </button>
 
-                <!-- Settings -->
                 <button
                     onclick="toggleSettings()"
                     class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition"
@@ -192,7 +193,6 @@
                     <i class="fas fa-cog text-gray-600 dark:text-gray-300"></i>
                 </button>
 
-                <!-- Identity -->
                 <div
                     class="flex items-center gap-2 bg-gray-100 dark:bg-surface px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 cursor-pointer"
                     onclick="copyNpub()"
@@ -217,9 +217,7 @@
         </div>
     </header>
 
-    <!-- =====================================================
-         SETTINGS PANEL
-         ===================================================== -->
+    <!-- SETTINGS PANEL -->
     <div
         id="settings-panel"
         class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-[60] w-[min(92vw,28rem)] bg-white dark:bg-surface rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5 fade-in"
@@ -272,17 +270,12 @@
         </p>
     </div>
 
-    <!-- =====================================================
-         MAIN
-         ===================================================== -->
+    <!-- MAIN -->
     <main class="max-w-2xl mx-auto pt-20 pb-24 px-4">
 
-        <!-- =================================================
-             TIMELINE
-             ================================================= -->
+        <!-- TIMELINE -->
         <div id="view-timeline" class="view-section fade-in">
 
-            <!-- Composer -->
             <div class="bg-white dark:bg-surface rounded-2xl p-4 shadow-sm mb-6 border border-gray-100 dark:border-gray-800">
                 <textarea
                     id="post-input"
@@ -306,10 +299,8 @@
                 </div>
             </div>
 
-            <!-- Feed -->
             <div id="feed-container" class="space-y-4"></div>
 
-            <!-- Loading -->
             <div id="loading-feed" class="text-center py-8 text-gray-400">
                 <i class="fas fa-circle-notch fa-spin text-2xl text-accent"></i>
                 <p class="mt-2 text-sm">
@@ -319,12 +310,10 @@
 
         </div>
 
-        <!-- =================================================
-             ROOMS
-             ================================================= -->
+        <!-- ROOMS -->
         <div id="view-rooms" class="view-section hidden fade-in">
 
-            <div class="bg-gradient-to-br from-accent to-orange-600 rounded-2xl p-6 text-white shadow-lg mb-6">
+            <div class="bg-gradient-to-br from-accent to-orange-600 rounded-2xl p-5 sm:p-6 text-white shadow-lg mb-6">
                 <h2 class="text-2xl font-black mb-2">
                     🎙️ غرف صوتية مباشرة
                 </h2>
@@ -333,18 +322,20 @@
                     يُفضّل ألا يتجاوز عدد المشاركين 5–6 أشخاص.
                 </p>
 
-                <div class="flex gap-2">
+                <!-- حقل الغرفة: عمودي على الموبايل، أفقي على الشاشات الأكبر -->
+                <div class="flex flex-col sm:flex-row gap-2 w-full">
                     <input
                         id="room-input"
                         type="text"
                         autocomplete="off"
                         placeholder="اسم الغرفة (مثال: tech)"
-                        class="flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500"
+                        class="w-full min-w-0 flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500"
                     >
+
                     <button
                         id="btn-join-room"
                         onclick="toggleRoom()"
-                        class="bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md"
+                        class="w-full sm:w-auto shrink-0 bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md"
                     >
                         دخول
                     </button>
@@ -414,9 +405,7 @@
 
     </main>
 
-    <!-- =====================================================
-         REPLY MODAL
-         ===================================================== -->
+    <!-- REPLY MODAL -->
     <div
         id="reply-modal"
         class="hidden fixed inset-0 z-[80] modal-overlay flex items-end sm:items-center justify-center p-4"
@@ -456,9 +445,7 @@
         </div>
     </div>
 
-    <!-- =====================================================
-         BOTTOM NAVIGATION
-         ===================================================== -->
+    <!-- BOTTOM NAV -->
     <nav class="fixed bottom-0 w-full glass border-t border-gray-200 dark:border-gray-800 z-50 pb-safe">
         <div class="max-w-2xl mx-auto flex justify-around py-3">
 
@@ -483,9 +470,7 @@
         </div>
     </nav>
 
-    <!-- =====================================================
-         Toast
-         ===================================================== -->
+    <!-- Toast -->
     <div
         id="toast"
         class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-dark text-white px-6 py-3 rounded-full shadow-xl z-[100] hidden transition-all duration-300 flex items-center gap-2 text-sm"
@@ -494,7 +479,6 @@
         <span id="toast-msg">تم بنجاح</span>
     </div>
 
-    <!-- Remote Audio Container -->
     <div id="audio-container" aria-hidden="true"></div>
 
     <script src="./app.js"></script>
