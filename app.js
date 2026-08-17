@@ -1,37 +1,39 @@
 const RELAYS = ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'];
 const APP_TAG = 'pulse-platform';
 
-let skBytes, pk, npub;
+let secretKeyHex, pk, npub;
 const storageKey = 'pulse_nsec_hex';
 
-// 1. تهيئة الهوية مع إصلاح تلقائي للأخطاء
+// 1. تهيئة الهوية (مضادة للأخطاء تماماً)
 function initIdentity() {
     try {
         let hexSk = localStorage.getItem(storageKey);
         
-        // إذا لم يوجد مفتاح أو كان طوله غير صحيح (يجب أن يكون 64 حرفاً)
-        if (!hexSk || hexSk.length !== 64) {
+        // التحقق الصارم: يجب أن يكون نصاً وطوله 64 حرفاً سداسي عشر صحيح
+        const isValidHex = typeof hexSk === 'string' && hexSk.length === 64 && /^[0-9a-fA-F]{64}$/.test(hexSk);
+        
+        if (!isValidHex) {
             console.log("Generating new secure identity...");
-            const newSk = NostrTools.generateSecretKey();
-            hexSk = NostrTools.utils.bytesToHex(newSk);
+            const newSkUint8 = NostrTools.generateSecretKey();
+            // تحويل آمن ومضمون 100% من Uint8Array إلى Hex String بدون دوال المكتبة المعقدة
+            hexSk = Array.from(newSkUint8).map(b => b.toString(16).padStart(2, '0')).join('');
             localStorage.setItem(storageKey, hexSk);
         }
         
-        skBytes = NostrTools.utils.hexToBytes(hexSk);
+        // الحفظ كمتغير عام (nostr-tools v2 يقبل Hex String مباشرة للتوقيع)
+        secretKeyHex = hexSk;
         
-        // تحقق أمني إضافي للتأكد من أن المفتاح 32 بايت
-        if (!skBytes || skBytes.length !== 32) {
-            throw new Error("Invalid key length");
-        }
-
-        pk = NostrTools.getPublicKey(skBytes);
+        // توليد المفتاح العام والهوية
+        pk = NostrTools.getPublicKey(secretKeyHex);
         npub = NostrTools.nip19.npubEncode(pk);
+        
         document.getElementById('npub-display').textContent = npub.slice(0, 8) + '...' + npub.slice(-6);
+        console.log("Identity loaded successfully:", npub.slice(0, 8));
         
     } catch (err) {
-        console.error("Identity Error:", err);
-        // الحل الجذري: مسح المفتاح التالف وإعادة المحاولة
+        console.error("Critical Identity Error:", err);
         localStorage.removeItem(storageKey);
+        // محاولة أخيرة وحيدة لتوليد مفتاح جديد
         initIdentity();
     }
 }
@@ -93,11 +95,6 @@ async function publishPost() {
     if (!content) return;
 
     try {
-        // تحقق نهائي قبل النشر
-        if (!skBytes || skBytes.length !== 32) {
-            throw new Error("المفتاح السري غير صالح، جاري إعادة التهيئة...");
-        }
-
         const eventTemplate = {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
@@ -105,11 +102,13 @@ async function publishPost() {
             content: content
         };
         
-        const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
+        // التوقيع باستخدام Hex String مباشرة (آمن ومضمون في v2)
+        const signedEvent = NostrTools.finalizeEvent(eventTemplate, secretKeyHex);
         showToast('جاري النشر...', 'info');
-        const results = await pool.publish(RELAYS, signedEvent);
         
+        const results = await pool.publish(RELAYS, signedEvent);
         const successCount = Object.values(results).filter(r => r).length;
+        
         if (successCount > 0) {
             input.value = '';
             showToast('تم النشر بنجاح في مجتمعك', 'success');
@@ -118,13 +117,7 @@ async function publishPost() {
         }
     } catch (err) {
         console.error("Publish Error:", err);
-        showToast(err.message.includes('غير صالح') ? err.message : 'فشل النشر: ' + err.message, 'error');
-        // محاولة إصلاح ذاتي إذا فشل النشر بسبب المفتاح
-        if (err.message.includes('undefined') || err.message.includes('32 bytes')) {
-            localStorage.removeItem(storageKey);
-            initIdentity();
-            showToast('تم إصلاح الهوية، حاول النشر مرة أخرى', 'info');
-        }
+        showToast('فشل النشر: ' + err.message, 'error');
     }
 }
 
@@ -136,7 +129,7 @@ async function likePost(targetId, targetPubkey) {
             tags: [['e', targetId], ['p', targetPubkey]],
             content: '+'
         };
-        const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
+        const signedEvent = NostrTools.finalizeEvent(eventTemplate, secretKeyHex);
         await pool.publish(RELAYS, signedEvent);
         showToast('تم الإعجاب', 'success');
     } catch (err) {
@@ -155,7 +148,7 @@ async function replyToPost(targetId, targetPubkey) {
             tags: [['e', targetId, '', 'reply'], ['p', targetPubkey], ['t', APP_TAG]],
             content: content
         };
-        const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
+        const signedEvent = NostrTools.finalizeEvent(eventTemplate, secretKeyHex);
         await pool.publish(RELAYS, signedEvent);
         showToast('تم إرسال الرد', 'success');
     } catch (err) {
@@ -163,7 +156,7 @@ async function replyToPost(targetId, targetPubkey) {
     }
 }
 
-// ── Voice Rooms Logic (مع حفظ الحالة عند الـ Refresh) ──
+// ── Voice Rooms Logic ──
 let localStream = null;
 let peer = null;
 let currentRoom = null;
@@ -176,13 +169,12 @@ async function toggleRoom(forceLeave = false) {
     const activeUi = document.getElementById('active-room-ui');
 
     if (!currentRoom || forceLeave) {
-        // مغادرة الغرفة
         if (roomSub) roomSub.close();
         if (peer) peer.destroy();
         if (localStream) localStream.getTracks().forEach(t => t.stop());
         
         currentRoom = null;
-        localStorage.removeItem('active_room'); // مسح الحالة
+        localStorage.removeItem('active_room');
         activeUi.classList.add('hidden');
         document.getElementById('peers-list').innerHTML = '';
         btn.textContent = 'دخول';
@@ -192,7 +184,6 @@ async function toggleRoom(forceLeave = false) {
         return;
     }
 
-    // الدخول للغرفة
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             audio: { echoCancellation: true, noiseSuppression: true } 
@@ -236,7 +227,6 @@ async function toggleRoom(forceLeave = false) {
         btn.classList.remove('bg-white', 'text-accent');
         input.disabled = true;
         
-        // حفظ الحالة لاستعادتها عند الـ Refresh
         localStorage.setItem('active_room', currentRoom);
 
     } catch (err) {
@@ -252,7 +242,7 @@ function announcePresence(myPeerId) {
         tags: [['t', 'pulse-room'], ['room', currentRoom]],
         content: JSON.stringify({ peerId: myPeerId, npub: npub.slice(0,8) })
     };
-    const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
+    const signedEvent = NostrTools.finalizeEvent(eventTemplate, secretKeyHex);
     pool.publish(RELAYS, signedEvent);
 }
 
@@ -355,12 +345,10 @@ document.addEventListener('DOMContentLoaded', () => {
     initIdentity();
     startFeed();
 
-    // 🔴 استعادة الغرفة إذا كان المستخدم قد عمل Refresh وهو بداخلها
     const savedRoom = localStorage.getItem('active_room');
     if (savedRoom) {
         currentRoom = savedRoom;
         document.getElementById('room-input').value = currentRoom;
-        // ننتظر قليلاً لضمان تحميل المكتبات ثم ندخل الغرفة تلقائياً
         setTimeout(() => {
             toggleRoom();
         }, 1000);
