@@ -1,5 +1,5 @@
 const RELAYS = ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'];
-const APP_TAG = 'pulse-platform';
+const APP_TAG = 'pulse-platform'; // هذا هو الوسم السري الذي يجمع مجتمعك فقط
 
 let skBytes, pk, npub;
 const storageKey = 'pulse_nsec_hex';
@@ -27,9 +27,11 @@ const seenEvents = new Set();
 
 function startFeed() {
     document.getElementById('loading-feed').classList.remove('hidden');
+    
+    // 🔴 التعديل الأول: جلب المنشورات التي تحمل وسم تطبيقك فقط
     pool.subscribeMany(
         RELAYS,
-        [{ kinds: [1], limit: 30 }],
+        [{ kinds: [1], '#t': [APP_TAG], limit: 30 }], 
         {
             onevent: (event) => {
                 if (seenEvents.has(event.id)) return;
@@ -82,7 +84,7 @@ async function publishPost() {
         const eventTemplate = {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [['t', APP_TAG]],
+            tags: [['t', APP_TAG]], // 🔴 يتم وسم المنشور تلقائياً ليظهر في فيد تطبيقك
             content: content
         };
         
@@ -93,7 +95,7 @@ async function publishPost() {
         const successCount = Object.values(results).filter(r => r).length;
         if (successCount > 0) {
             input.value = '';
-            showToast('تم النشر بنجاح على الشبكة', 'success');
+            showToast('تم النشر بنجاح في مجتمعك', 'success');
         } else {
             showToast('فشل النشر: الخوادم لم تستجب', 'error');
         }
@@ -127,7 +129,7 @@ async function replyToPost(targetId, targetPubkey) {
         const eventTemplate = {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [['e', targetId, '', 'reply'], ['p', targetPubkey]],
+            tags: [['e', targetId, '', 'reply'], ['p', targetPubkey], ['t', APP_TAG]],
             content: content
         };
         const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
@@ -138,6 +140,7 @@ async function replyToPost(targetId, targetPubkey) {
     }
 }
 
+// ── Voice Rooms Logic (محسنة لتشخيص الأخطاء) ──
 let localStream = null;
 let peer = null;
 let currentRoom = null;
@@ -151,32 +154,45 @@ async function toggleRoom() {
 
     if (!currentRoom) {
         currentRoom = input.value.trim() || 'general';
+        
+        // 1. فحص المايكروفون أولاً
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ 
                 audio: { echoCancellation: true, noiseSuppression: true } 
             });
         } catch (e) {
-            showToast('يرجى السماح باستخدام المايكروفون من إعدادات المتصفح', 'error');
+            console.error("Mic Error:", e);
+            showToast('يرجى السماح باستخدام المايكروفون من إعدادات المتصفح (أيقونة القفل بجانب الرابط)', 'error');
             return;
         }
 
+        // 2. فحص خادم الصوت (PeerJS)
         try {
-            const myPeerId = 'pulse-' + npub.slice(4, 12);
-            peer = new Peer(myPeerId, {
+            // توليد معرف عشوائي آمن لتجنب التعارض
+            const safeId = 'p-' + Math.random().toString(36).substring(2, 8);
+            
+            peer = new Peer(safeId, {
                 host: '0.peerjs.com',
                 port: 443,
-                secure: true
+                secure: true,
+                debug: 1
             });
             
             peer.on('open', (id) => {
-                console.log('My Peer ID:', id);
+                console.log('تم الاتصال بخادم الصوت بنجاح. المعرف:', id);
                 announcePresence(id);
                 listenForPeers();
             });
 
             peer.on('error', (err) => {
                 console.error('PeerJS Error:', err);
-                showToast('فشل الاتصال بالغرفة الصوتية', 'error');
+                if (err.type === 'unavailable-id') {
+                    showToast('معرف المستخدم محجوز، جاري المحاولة...', 'info');
+                } else if (err.type === 'network') {
+                    showToast('فشل الاتصال بالشبكة. تحقق من الإنترنت', 'error');
+                } else {
+                    showToast('فشل خادم الصوت: ' + err.type, 'error');
+                }
             });
 
             peer.on('call', (call) => {
@@ -191,10 +207,13 @@ async function toggleRoom() {
             btn.textContent = 'مغادرة';
             btn.classList.add('bg-red-500', 'text-white');
             btn.classList.remove('bg-white', 'text-accent');
+            
         } catch (err) {
-            showToast('فشل تهيئة الغرفة', 'error');
+            console.error("Room Init Error:", err);
+            showToast('فشل تهيئة الغرفة: ' + err.message, 'error');
         }
     } else {
+        // مغادرة الغرفة
         if (roomSub) roomSub.close();
         if (peer) peer.destroy();
         if (localStream) localStream.getTracks().forEach(t => t.stop());
@@ -225,7 +244,7 @@ function listenForPeers() {
         [{ kinds: [1], '#room': [currentRoom], limit: 10 }],
         {
             onevent: (event) => {
-                if (event.pubkey === pk) return;
+                if (event.pubkey === pk) return; 
                 try {
                     const data = JSON.parse(event.content);
                     if (data.peerId && !document.getElementById(`peer-${data.peerId}`)) {
