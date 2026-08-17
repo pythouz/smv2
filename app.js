@@ -1,15 +1,7 @@
 /* =========================================================
-   Pulse - التطبيق اللامركزي
-   الإصدار: Voice Rooms + Nostr Realtime + Optimistic UI
-
-   ملاحظات:
-   - لا توجد أدوات Build.
-   - يعمل مباشرة من GitHub Pages.
-   - Nostr Tools 2.x.
-   - PeerJS 1.5.x.
-   - المفتاح السري محفوظ كـ Hex String.
-   - finalizeEvent يستخدم Hex String مباشرة.
-========================================================= */
+   Pulse - التطبيق الرئيسي
+   نظام Nostr + المنشورات + غرف الصوت WebRTC
+   ========================================================= */
 
 const RELAYS = [
     'wss://relay.damus.io',
@@ -18,143 +10,75 @@ const RELAYS = [
 ];
 
 const APP_TAG = 'pulse-platform';
-const ROOM_TAG = 'pulse-room-v2';
-
-/*
- * خوادم ICE:
- * Google STUN يساعد على اكتشاف الـPublic IP.
- * OpenRelay TURN خدمة عامة، وقد تتغير صلاحيتها أو تكون مزدحمة.
- *
- * للإنتاج الحقيقي يفضل لاحقاً استخدام TURN خاص بك.
- */
-const ICE_SERVERS = [
-    {
-        urls: [
-            'stun:stun.l.google.com:19302',
-            'stun:stun1.l.google.com:19302',
-            'stun:stun2.l.google.com:19302'
-        ]
-    },
-
-    {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelay',
-        credential: 'openrelay'
-    },
-
-    {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelay',
-        credential: 'openrelay'
-    },
-
-    {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelay',
-        credential: 'openrelay'
-    }
-];
-
-const PEER_CONFIG = {
-    iceServers: ICE_SERVERS,
-    sdpSemantics: 'unified-plan'
-};
-
+const ROOM_EVENT_KIND = 20000;
 
 /* =========================================================
    الحالة العامة
-========================================================= */
+   ========================================================= */
 
 let secretKeyHex = null;
 let pk = null;
 let npub = null;
 
-let pool = null;
-
 const storageKey = 'pulse_nsec_hex';
-const activeRoomStorageKey = 'pulse_active_voice_room';
-const activeVoiceStorageKey = 'pulse_voice_was_active';
+
+const pool = new NostrTools.SimplePool();
 
 const seenEvents = new Set();
-const seenInteractionEvents = new Set();
+const renderedPosts = new Map();
 
-let interactionSub = null;
+let postsSubscription = null;
+let reactionsSubscription = null;
 
-const postStats = new Map();
-
-/* =========================================================
-   حالة غرف الصوت
-========================================================= */
-
-let peer = null;
 let localStream = null;
+let peer = null;
 
 let currentRoom = null;
-let currentPeerId = null;
+let roomSubscription = null;
 
-let roomPresenceSub = null;
-let roomListSub = null;
+let myPeerId = null;
 
-let presenceTimer = null;
-let roomHeartbeatTimer = null;
+let activeCalls = new Map();
+let announcedPeers = new Set();
 
-let isInRoom = false;
 let isMuted = false;
+let isJoiningRoom = false;
 
-const activeCalls = new Map();
-const knownRoomPeers = new Map();
-
-let audioContext = null;
-let backgroundAudioContext = null;
+let bgAudioContext = null;
 let silentAudioElement = null;
 let wakeLock = null;
 
 
 /* =========================================================
-   أدوات عامة
-========================================================= */
+   أدوات مساعدة
+   ========================================================= */
 
-function log(...args) {
-    console.log('[PULSE]', ...args);
-}
-
-function voiceLog(...args) {
-    console.log('[VOICE]', ...args);
-}
-
-function voiceError(...args) {
-    console.error('[VOICE ERROR]', ...args);
-}
-
-function normalizeRoomName(room) {
-    return String(room || '')
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, '-')
-        .replace(/[^a-z0-9\u0600-\u06ff_-]/gi, '')
-        .slice(0, 60);
-}
-
-function getRoomDisplayName(room) {
-    return String(room || '').replace(/-/g, ' ');
+function $(id) {
+    return document.getElementById(id);
 }
 
 function escapeHtml(text) {
     const div = document.createElement('div');
-    div.textContent = String(text ?? '');
+    div.textContent = text ?? '';
     return div.innerHTML;
 }
 
-function getTag(event, name) {
-    const tag = (event.tags || []).find(item => item[0] === name);
-    return tag ? tag[1] : null;
+function safeRoomName(name) {
+    return String(name || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .slice(0, 80);
 }
 
-function getTags(event, name) {
-    return (event.tags || [])
-        .filter(item => item[0] === name)
-        .map(item => item[1])
-        .filter(Boolean);
+function getErrorMessage(error) {
+    if (!error) return 'خطأ غير معروف';
+
+    if (typeof error === 'string') {
+        return error;
+    }
+
+    return error.message || error.type || 'خطأ غير معروف';
 }
 
 function sleep(ms) {
@@ -164,19 +88,19 @@ function sleep(ms) {
 
 /* =========================================================
    Toast
-========================================================= */
+   ========================================================= */
 
 function showToast(message, type = 'success') {
-    const toast = document.getElementById('toast');
-    const icon = document.getElementById('toast-icon');
-    const text = document.getElementById('toast-msg');
+    const toast = $('toast');
+    const icon = $('toast-icon');
+    const msg = $('toast-msg');
 
-    if (!toast || !icon || !text) {
-        console.log('[TOAST]', message);
+    if (!toast || !icon || !msg) {
+        console.log('[Toast]', message);
         return;
     }
 
-    text.textContent = message;
+    msg.textContent = message;
 
     if (type === 'error') {
         icon.className = 'fas fa-exclamation-circle text-red-400';
@@ -198,248 +122,191 @@ function showToast(message, type = 'success') {
 
 /* =========================================================
    الهوية Nostr
-========================================================= */
-
-function bytesToHex(bytes) {
-    return Array.from(bytes)
-        .map(byte => byte.toString(16).padStart(2, '0'))
-        .join('');
-}
+   ========================================================= */
 
 function initIdentity() {
     try {
-        let savedKey = localStorage.getItem(storageKey);
+        let hexSk = localStorage.getItem(storageKey);
 
-        const valid =
-            typeof savedKey === 'string' &&
-            savedKey.length === 64 &&
-            /^[0-9a-fA-F]{64}$/.test(savedKey);
+        const isValidHex =
+            typeof hexSk === 'string' &&
+            hexSk.length === 64 &&
+            /^[0-9a-fA-F]{64}$/.test(hexSk);
 
-        if (!valid) {
-            log('لا يوجد مفتاح Nostr صالح، سيتم إنشاء هوية جديدة.');
+        if (!isValidHex) {
+            console.log('[Nostr] إنشاء هوية جديدة');
 
-            const newKey = NostrTools.generateSecretKey();
+            const generated = NostrTools.generateSecretKey();
 
-            savedKey = bytesToHex(newKey);
+            hexSk = Array.from(generated)
+                .map(byte => byte.toString(16).padStart(2, '0'))
+                .join('');
 
-            localStorage.setItem(storageKey, savedKey);
+            localStorage.setItem(storageKey, hexSk);
         }
 
         /*
          * مهم:
-         * نحتفظ بالمفتاح كـ Hex String.
-         * لا نحوله إلى Uint8Array قبل finalizeEvent.
+         * nostr-tools v2 يقبل الـ Hex String مباشرة.
+         * لا نحوله إلى Uint8Array عند finalizeEvent.
          */
-        secretKeyHex = savedKey;
+        secretKeyHex = hexSk;
 
         pk = NostrTools.getPublicKey(secretKeyHex);
         npub = NostrTools.nip19.npubEncode(pk);
 
-        const display = document.getElementById('npub-display');
-
-        if (display) {
-            display.textContent =
+        if ($('npub-display')) {
+            $('npub-display').textContent =
                 npub.slice(0, 10) + '...' + npub.slice(-6);
         }
 
-        log('تم تحميل الهوية:', npub);
+        console.log('[Nostr] الهوية جاهزة');
+        console.log('[Nostr] Public Key:', pk);
 
     } catch (error) {
-        console.error('[IDENTITY ERROR]', error);
+        console.error('[Nostr] فشل تهيئة الهوية:', error);
 
         localStorage.removeItem(storageKey);
 
         showToast(
-            'حدث خطأ أثناء تهيئة الهوية. سيتم المحاولة مرة أخرى.',
+            'حدث خطأ في الهوية، سيتم إنشاء هوية جديدة',
             'error'
         );
 
-        throw error;
-    }
-}
-
-
-/* =========================================================
-   تهيئة Nostr
-========================================================= */
-
-function initNostr() {
-    pool = new NostrTools.SimplePool();
-
-    log('Nostr Pool جاهز.');
-}
-
-
-/* =========================================================
-   نشر Event عبر Nostr
-========================================================= */
-
-async function publishEvent(eventTemplate, successMessage = null) {
-    if (!pool) {
-        throw new Error('Nostr Pool غير جاهز.');
-    }
-
-    if (!secretKeyHex) {
-        throw new Error('الهوية غير جاهزة.');
-    }
-
-    const signedEvent =
-        NostrTools.finalizeEvent(eventTemplate, secretKeyHex);
-
-    log(
-        'نشر Event:',
-        signedEvent.kind,
-        signedEvent.id
-    );
-
-    const publishPromises = pool.publish(
-        RELAYS,
-        signedEvent
-    );
-
-    /*
-     * يكفي نجاح Relay واحد على الأقل.
-     */
-    try {
-        await Promise.any(publishPromises);
-
-        if (successMessage) {
-            showToast(successMessage, 'success');
-        }
-
-        return signedEvent;
-
-    } catch (error) {
-        console.error(
-            '[NOSTR PUBLISH ERROR]',
-            signedEvent,
-            error
-        );
-
-        throw error;
+        setTimeout(initIdentity, 500);
     }
 }
 
 
 /* =========================================================
    المنشورات
-========================================================= */
+   ========================================================= */
 
 function startFeed() {
-    const loader = document.getElementById('loading-feed');
+    console.log('[Feed] بدء الاشتراك في المنشورات');
 
-    if (loader) {
-        loader.classList.remove('hidden');
+    const loading = $('loading-feed');
+
+    if (loading) {
+        loading.classList.remove('hidden');
     }
 
-    pool.subscribeMany(
-        RELAYS,
-        [
+    try {
+        postsSubscription = pool.subscribeMany(
+            RELAYS,
+            [
+                {
+                    kinds: [1],
+                    '#t': [APP_TAG],
+                    limit: 50
+                }
+            ],
             {
-                kinds: [1],
-                '#t': [APP_TAG],
-                limit: 50
-            }
-        ],
-        {
-            onevent(event) {
-                if (seenEvents.has(event.id)) {
-                    return;
+                onevent: event => {
+                    if (!event || !event.id) return;
+
+                    /*
+                     * الردود التي تحمل e tag للمنشور لا نريد
+                     * عرضها كمنشورات رئيسية.
+                     */
+                    if (isReplyEvent(event)) {
+                        handleIncomingReply(event);
+                        return;
+                    }
+
+                    if (seenEvents.has(event.id)) {
+                        return;
+                    }
+
+                    seenEvents.add(event.id);
+
+                    renderPost(event);
+                },
+
+                oneose: () => {
+                    console.log('[Feed] تم تحميل المنشورات الأولية');
+
+                    if (loading) {
+                        loading.classList.add('hidden');
+                    }
+
+                    startReactionSubscription();
+                },
+
+                onclose: () => {
+                    console.log('[Feed] اشتراك المنشورات أغلق');
                 }
-
-                seenEvents.add(event.id);
-
-                renderPost(event);
-            },
-
-            oneose() {
-                if (loader) {
-                    loader.classList.add('hidden');
-                }
-
-                /*
-                 * بعد ظهور المنشورات نبدأ الاشتراك
-                 * في الإعجابات والردود الخاصة بها.
-                 */
-                refreshInteractionSubscription();
-            },
-
-            onclose() {
-                log('تم إغلاق اشتراك المنشورات.');
             }
+        );
+
+    } catch (error) {
+        console.error('[Feed] خطأ في subscribeMany:', error);
+
+        if (loading) {
+            loading.classList.add('hidden');
         }
+
+        showToast(
+            'تعذر الاتصال بشبكة المنشورات: ' +
+            getErrorMessage(error),
+            'error'
+        );
+    }
+}
+
+function isReplyEvent(event) {
+    if (!event.tags) return false;
+
+    return event.tags.some(tag =>
+        tag[0] === 'e' &&
+        tag[1]
     );
 }
 
-
-/* =========================================================
-   إنشاء حالة المنشور
-========================================================= */
-
-function ensurePostStats(event) {
-    if (!postStats.has(event.id)) {
-        postStats.set(event.id, {
-            id: event.id,
-            pubkey: event.pubkey,
-            likes: 0,
-            replies: 0,
-            likedByMe: false,
-            likedEventIds: new Set(),
-            replyEventIds: new Set()
-        });
-    }
-
-    return postStats.get(event.id);
+function getPostCard(postId) {
+    return document.querySelector(
+        `.post-card[data-post-id="${CSS.escape(postId)}"]`
+    );
 }
 
-
-/* =========================================================
-   Render Post
-========================================================= */
-
 function renderPost(event) {
-    const container = document.getElementById('feed-container');
+    const container = $('feed-container');
 
-    if (!container) {
+    if (!container) return;
+
+    if (renderedPosts.has(event.id)) {
         return;
     }
 
-    /*
-     * منع تكرار نفس المنشور.
-     */
-    if (document.querySelector(`[data-post-id="${event.id}"]`)) {
-        return;
-    }
-
-    const stats = ensurePostStats(event);
-
-    const shortPubkey =
-        event.pubkey.slice(0, 8) + '...';
+    const shortPubkey = event.pubkey.slice(0, 8);
 
     const time = new Date(
         event.created_at * 1000
     ).toLocaleString('ar-EG', {
-        dateStyle: 'short',
-        timeStyle: 'short'
+        hour: '2-digit',
+        minute: '2-digit',
+        day: 'numeric',
+        month: 'short'
     });
 
-    const card = document.createElement('article');
+    const div = document.createElement('div');
 
-    card.className =
+    div.className =
         'post-card bg-white dark:bg-surface rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-800 fade-in';
 
-    card.dataset.postId = event.id;
+    div.dataset.postId = event.id;
+    div.dataset.author = event.pubkey;
 
-    card.innerHTML = `
+    div.innerHTML = `
         <div class="flex justify-between items-start mb-3">
             <div class="flex items-center gap-3">
                 <div class="avatar w-10 h-10 bg-indigo-500 text-sm">
-                    ${escapeHtml(event.pubkey.slice(0, 2))}
+                    ${escapeHtml(shortPubkey)}
                 </div>
 
                 <div>
                     <div class="font-bold text-sm dark:text-white">
-                        ${escapeHtml(shortPubkey)}
+                        ${escapeHtml(shortPubkey)}...
                     </div>
 
                     <div class="text-xs text-gray-400">
@@ -453,45 +320,43 @@ function renderPost(event) {
             ${escapeHtml(event.content)}
         </p>
 
-        <div class="flex items-center gap-5 text-gray-400 text-sm border-t border-gray-100 dark:border-gray-800 pt-3">
+        <div class="flex items-center gap-6 text-gray-400 text-sm border-t border-gray-100 dark:border-gray-800 pt-3">
 
             <button
-                type="button"
-                class="like-btn flex items-center gap-2 hover:text-red-500 transition"
+                class="like-button flex items-center gap-2 hover:text-red-500 transition"
                 onclick="likePost('${event.id}', '${event.pubkey}')"
+                data-liked="false"
             >
                 <i class="far fa-heart"></i>
 
-                <span class="like-label">
+                <span>
                     إعجاب
                 </span>
 
                 <span
-                    class="like-count font-bold"
-                    data-like-count="${event.id}"
+                    class="like-count"
+                    data-count="0"
                 >
                     0
                 </span>
             </button>
 
             <button
-                type="button"
-                class="reply-btn flex items-center gap-2 hover:text-blue-500 transition"
+                class="reply-button flex items-center gap-2 hover:text-blue-500 transition"
                 onclick="replyToPost('${event.id}', '${event.pubkey}')"
             >
                 <i class="far fa-comment"></i>
 
-                <span>
-                    رد
-                </span>
+                <span>رد</span>
 
                 <span
-                    class="reply-count font-bold"
-                    data-reply-count="${event.id}"
+                    class="reply-count"
+                    data-count="0"
                 >
                     0
                 </span>
             </button>
+
         </div>
 
         <div
@@ -500,406 +365,201 @@ function renderPost(event) {
         ></div>
     `;
 
-    container.prepend(card);
+    renderedPosts.set(event.id, div);
 
-    updatePostUI(event.id);
-
-    /*
-     * لأن قائمة المنشورات المعروضة تغيرت،
-     * نعيد إنشاء subscription الخاص بالتفاعلات.
-     */
-    refreshInteractionSubscription();
+    container.prepend(div);
 }
 
 
 /* =========================================================
-   تحديث UI للمنشور
-========================================================= */
+   Optimistic UI + Real-time reactions
+   ========================================================= */
 
-function updatePostUI(postId) {
-    const stats = postStats.get(postId);
+function getReactionStats(postId) {
+    const card = getPostCard(postId);
 
-    if (!stats) {
-        return;
-    }
+    if (!card) return null;
 
-    const card =
-        document.querySelector(
-            `[data-post-id="${postId}"]`
-        );
+    const likeButton = card.querySelector('.like-button');
+    const likeCount = card.querySelector('.like-count');
+    const replyCount = card.querySelector('.reply-count');
 
-    if (!card) {
-        return;
-    }
-
-    const likeCount =
-        card.querySelector('.like-count');
-
-    const replyCount =
-        card.querySelector('.reply-count');
-
-    const likeButton =
-        card.querySelector('.like-btn');
-
-    const icon =
-        likeButton?.querySelector('i');
-
-    if (likeCount) {
-        likeCount.textContent =
-            stats.likes > 0 ? stats.likes : '0';
-    }
-
-    if (replyCount) {
-        replyCount.textContent =
-            stats.replies > 0 ? stats.replies : '0';
-    }
-
-    if (stats.likedByMe) {
-        likeButton?.classList.add(
-            'text-red-500'
-        );
-
-        likeButton?.classList.remove(
-            'text-gray-400'
-        );
-
-        if (icon) {
-            icon.className =
-                'fas fa-heart text-red-500';
-        }
-    } else {
-        likeButton?.classList.remove(
-            'text-red-500'
-        );
-
-        if (icon) {
-            icon.className =
-                'far fa-heart';
-        }
-    }
+    return {
+        card,
+        likeButton,
+        likeCount,
+        replyCount
+    };
 }
 
+function updateLikeUI(postId, liked, countDelta = 0) {
+    const stats = getReactionStats(postId);
 
-/* =========================================================
-   نشر منشور
-========================================================= */
+    if (!stats) return;
 
-async function publishPost() {
-    const input =
-        document.getElementById('post-input');
+    const currentCount =
+        Number(stats.likeCount.dataset.count || 0);
 
-    const content =
-        input?.value.trim();
-
-    if (!content) {
-        return;
-    }
-
-    try {
-        showToast(
-            'جاري نشر المنشور...',
-            'info'
-        );
-
-        const event = await publishEvent({
-            kind: 1,
-            created_at:
-                Math.floor(Date.now() / 1000),
-            tags: [
-                ['t', APP_TAG]
-            ],
-            content
-        });
-
-        input.value = '';
-
-        /*
-         * Optimistic rendering:
-         * لا ننتظر Relay لكي يرى المستخدم منشوره.
-         */
-        if (!seenEvents.has(event.id)) {
-            seenEvents.add(event.id);
-            renderPost(event);
-        }
-
-        showToast(
-            'تم نشر المنشور بنجاح',
-            'success'
-        );
-
-    } catch (error) {
-        console.error(
-            '[POST ERROR]',
-            error
-        );
-
-        showToast(
-            'فشل نشر المنشور: ' +
-            (error?.message || 'خطأ غير معروف'),
-            'error'
-        );
-    }
-}
-
-
-/* =========================================================
-   Optimistic Like
-========================================================= */
-
-async function likePost(
-    targetId,
-    targetPubkey
-) {
-    const stats =
-        postStats.get(targetId);
-
-    if (!stats) {
-        return;
-    }
-
-    /*
-     * منع الضغط المتكرر.
-     */
-    if (stats.likedByMe) {
-        showToast(
-            'لقد أعجبت بهذا المنشور بالفعل',
-            'info'
-        );
-
-        return;
-    }
-
-    /*
-     * Optimistic UI:
-     * نغير الواجهة قبل انتظار Relay.
-     */
-    stats.likedByMe = true;
-    stats.likes += 1;
-
-    updatePostUI(targetId);
-
-    const button =
-        document.querySelector(
-            `[data-post-id="${targetId}"] .like-btn`
-        );
-
-    button?.classList.add(
-        'scale-110'
+    const newCount = Math.max(
+        0,
+        currentCount + countDelta
     );
 
-    setTimeout(() => {
-        button?.classList.remove(
-            'scale-110'
+    stats.likeCount.dataset.count = String(newCount);
+    stats.likeCount.textContent = String(newCount);
+
+    stats.likeButton.dataset.liked =
+        liked ? 'true' : 'false';
+
+    const icon = stats.likeButton.querySelector('i');
+
+    if (liked) {
+        stats.likeButton.classList.add(
+            'text-red-500',
+            'font-bold'
         );
+
+        if (icon) {
+            icon.className = 'fas fa-heart text-red-500';
+        }
+    } else {
+        stats.likeButton.classList.remove(
+            'text-red-500',
+            'font-bold'
+        );
+
+        if (icon) {
+            icon.className = 'far fa-heart';
+        }
+    }
+}
+
+async function likePost(targetId, targetPubkey) {
+    const stats = getReactionStats(targetId);
+
+    if (!stats) {
+        showToast('تعذر العثور على المنشور', 'error');
+        return;
+    }
+
+    const alreadyLiked =
+        stats.likeButton.dataset.liked === 'true';
+
+    if (alreadyLiked) {
+        showToast('لقد أعجبت بهذا المنشور بالفعل', 'info');
+        return;
+    }
+
+    /*
+     * =====================================================
+     * OPTIMISTIC UI
+     *
+     * نغير الواجهة فوراً قبل إرسال الحدث إلى Nostr.
+     * المستخدم يرى القلب الأحمر والعداد فوراً.
+     * =====================================================
+     */
+
+    updateLikeUI(
+        targetId,
+        true,
+        1
+    );
+
+    stats.likeButton.classList.add('scale-110');
+
+    setTimeout(() => {
+        stats.likeButton.classList.remove('scale-110');
     }, 180);
 
     try {
-        const event =
-            await publishEvent({
-                kind: 7,
-                created_at:
-                    Math.floor(Date.now() / 1000),
+        const eventTemplate = {
+            kind: 7,
+            created_at: Math.floor(Date.now() / 1000),
 
-                tags: [
-                    ['e', targetId],
-                    ['p', targetPubkey]
-                ],
+            tags: [
+                ['e', targetId],
+                ['p', targetPubkey]
+            ],
 
-                content: '+'
-            });
-
-        stats.likedEventIds.add(
-            event.id
-        );
-
-        showToast(
-            'تم تسجيل الإعجاب',
-            'success'
-        );
-
-    } catch (error) {
+            content: '+'
+        };
 
         /*
-         * Relay فشل:
-         * نرجع التغيير التفاؤلي.
+         * nostr-tools v2:
+         * secretKeyHex يتم تمريره مباشرة.
          */
-        stats.likedByMe = false;
-        stats.likes = Math.max(
-            0,
-            stats.likes - 1
+        const signedEvent =
+            NostrTools.finalizeEvent(
+                eventTemplate,
+                secretKeyHex
+            );
+
+        await pool.publish(
+            RELAYS,
+            signedEvent
         );
 
-        updatePostUI(targetId);
-
-        console.error(
-            '[LIKE ERROR]',
-            error
+        console.log(
+            '[Like] تم نشر الإعجاب:',
+            signedEvent.id
         );
 
-        showToast(
-            'فشل إرسال الإعجاب، وتم إلغاء التغيير',
-            'error'
-        );
-    }
-}
-
-
-/* =========================================================
-   الرد على المنشور
-========================================================= */
-
-async function replyToPost(
-    targetId,
-    targetPubkey
-) {
-    const content =
-        prompt('اكتب ردك:');
-
-    if (!content?.trim()) {
-        return;
-    }
-
-    const stats =
-        postStats.get(targetId);
-
-    if (!stats) {
-        return;
-    }
-
-    /*
-     * Optimistic reply count.
-     */
-    stats.replies += 1;
-
-    updatePostUI(targetId);
-
-    try {
-        const event =
-            await publishEvent({
-                kind: 1,
-                created_at:
-                    Math.floor(Date.now() / 1000),
-
-                tags: [
-                    ['e', targetId, '', 'reply'],
-                    ['p', targetPubkey],
-                    ['t', APP_TAG]
-                ],
-
-                content: content.trim()
-            });
-
-        renderReply(
-            targetId,
-            event
-        );
-
-        showToast(
-            'تم إرسال الرد',
-            'success'
-        );
+        showToast('تم الإعجاب ❤️', 'success');
 
     } catch (error) {
-
-        stats.replies = Math.max(
-            0,
-            stats.replies - 1
-        );
-
-        updatePostUI(targetId);
-
         console.error(
-            '[REPLY ERROR]',
+            '[Like] فشل نشر الإعجاب:',
             error
         );
 
+        /*
+         * لو فشل النشر نرجع Optimistic UI.
+         */
+        updateLikeUI(
+            targetId,
+            false,
+            -1
+        );
+
         showToast(
-            'فشل إرسال الرد',
+            'فشل إرسال الإعجاب: ' +
+            getErrorMessage(error),
             'error'
         );
     }
 }
 
-
-/* =========================================================
-   عرض الرد
-========================================================= */
-
-function renderReply(
-    targetId,
-    event
-) {
-    const container =
-        document.querySelector(
-            `[data-replies="${targetId}"]`
-        );
-
-    if (!container) {
-        return;
-    }
-
-    if (
-        container.querySelector(
-            `[data-reply-id="${event.id}"]`
-        )
-    ) {
-        return;
-    }
-
-    const reply =
-        document.createElement('div');
-
-    reply.dataset.replyId =
-        event.id;
-
-    reply.className =
-        'bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-sm fade-in';
-
-    reply.innerHTML = `
-        <div class="text-xs text-gray-400 mb-1">
-            ${escapeHtml(
-                event.pubkey.slice(0, 8)
-            )}...
-        </div>
-
-        <div class="text-gray-700 dark:text-gray-200 whitespace-pre-wrap">
-            ${escapeHtml(event.content)}
-        </div>
-    `;
-
-    container.appendChild(reply);
-}
-
-
-/* =========================================================
-   Real-time Like / Reply Subscription
-========================================================= */
-
-function refreshInteractionSubscription() {
-    if (interactionSub) {
-        try {
-            interactionSub.close();
-        } catch (_) {}
-    }
-
+function startReactionSubscription() {
     const postIds = Array.from(
-        document.querySelectorAll(
-            '.post-card[data-post-id]'
-        )
-    )
-        .map(card => card.dataset.postId)
-        .filter(Boolean);
+        renderedPosts.keys()
+    );
 
     if (!postIds.length) {
         return;
     }
 
     /*
-     * Nostr filters لا تقبل أكثر من قيمة واحدة؟
-     * #e تقبل قائمة IDs، وتعمل كـ OR.
+     * نعيد إنشاء الاشتراك بناءً على المنشورات الموجودة
+     * في DOM حالياً.
      */
-    interactionSub =
-        pool.subscribeMany(
+    if (reactionsSubscription) {
+        try {
+            reactionsSubscription.close();
+        } catch (error) {
+            console.log(
+                '[Reactions] تعذر إغلاق الاشتراك القديم',
+                error
+            );
+        }
+    }
+
+    console.log(
+        '[Reactions] الاستماع للتفاعلات:',
+        postIds.length
+    );
+
+    try {
+        reactionsSubscription = pool.subscribeMany(
             RELAYS,
             [
                 {
@@ -909,417 +569,240 @@ function refreshInteractionSubscription() {
                 }
             ],
             {
-                onevent(event) {
-                    handleInteractionEvent(event);
+                onevent: event => {
+                    if (!event || !event.id) {
+                        return;
+                    }
+
+                    if (event.kind === 7) {
+                        handleIncomingLike(event);
+                    }
+
+                    if (event.kind === 1) {
+                        handleIncomingReply(event);
+                    }
+                },
+
+                oneose: () => {
+                    console.log(
+                        '[Reactions] تم تحميل التفاعلات الحالية'
+                    );
                 }
             }
         );
+
+    } catch (error) {
+        console.error(
+            '[Reactions] خطأ في subscribeMany:',
+            error
+        );
+    }
 }
 
+const processedLikes = new Set();
 
-/* =========================================================
-   معالجة الإعجاب / الرد اللحظي
-========================================================= */
-
-function handleInteractionEvent(event) {
-    if (
-        seenInteractionEvents.has(event.id)
-    ) {
+function handleIncomingLike(event) {
+    if (processedLikes.has(event.id)) {
         return;
     }
 
-    seenInteractionEvents.add(
-        event.id
+    processedLikes.add(event.id);
+
+    const targetId = getTagValue(
+        event.tags,
+        'e'
     );
-
-    const targetIds =
-        getTags(event, 'e');
-
-    if (!targetIds.length) {
-        return;
-    }
-
-    /*
-     * نبحث عن أول منشور موجود في DOM.
-     */
-    const targetId =
-        targetIds.find(id =>
-            postStats.has(id)
-        );
 
     if (!targetId) {
         return;
     }
 
-    const stats =
-        postStats.get(targetId);
+    const stats = getReactionStats(targetId);
 
-    if (event.kind === 7) {
-        /*
-         * إذا كان هذا نفس إعجاب المستخدم،
-         * لا نزيد العداد مرتين.
-         */
-        if (
-            stats.likedEventIds.has(
-                event.id
-            )
-        ) {
-            return;
-        }
-
-        stats.likedEventIds.add(
-            event.id
-        );
-
-        stats.likes += 1;
-
-        if (event.pubkey === pk) {
-            stats.likedByMe = true;
-        }
-
-        updatePostUI(targetId);
-
+    if (!stats) {
         return;
     }
 
-    if (event.kind === 1) {
-        /*
-         * تجاهل المنشور الأصلي نفسه.
-         */
-        if (
-            event.id === targetId
-        ) {
-            return;
-        }
-
-        if (
-            stats.replyEventIds.has(
-                event.id
-            )
-        ) {
-            return;
-        }
-
-        stats.replyEventIds.add(
-            event.id
-        );
-
-        /*
-         * إذا كان ردنا منشوراً بالفعل عن طريق
-         * Optimistic UI، لا نزيد العدد مرة أخرى.
-         */
-        if (
-            event.pubkey === pk &&
-            stats.replies > 0
-        ) {
-            renderReply(
-                targetId,
-                event
-            );
-
-            updatePostUI(targetId);
-
-            return;
-        }
-
-        stats.replies += 1;
-
-        renderReply(
-            targetId,
-            event
-        );
-
-        updatePostUI(targetId);
-    }
-}
-
-
-/* =========================================================
-   غرف الصوت - PeerJS
-========================================================= */
-
-function generatePeerId() {
     /*
-     * Peer ID ليس هوية المستخدم.
-     * هو مجرد ID مؤقت لجلسة WebRTC.
+     * لو كان الحدث من المستخدم الحالي،
+     * الـ Optimistic UI قام بالزيادة بالفعل.
+     *
+     * لذلك لا نزيده مرة أخرى.
      */
-    return (
-        'pulse-' +
-        Date.now().toString(36) +
-        '-' +
-        Math.random()
-            .toString(36)
-            .slice(2, 9)
+    if (event.pubkey === pk) {
+        return;
+    }
+
+    const currentCount =
+        Number(stats.likeCount.dataset.count || 0);
+
+    stats.likeCount.dataset.count =
+        String(currentCount + 1);
+
+    stats.likeCount.textContent =
+        String(currentCount + 1);
+
+    console.log(
+        '[Like] إعجاب جديد:',
+        targetId
     );
 }
 
-
-/* =========================================================
-   الحصول على المايكروفون
-========================================================= */
-
-async function requestMicrophone() {
-    if (
-        !navigator.mediaDevices ||
-        !navigator.mediaDevices.getUserMedia
-    ) {
-        throw new Error(
-            'المتصفح لا يدعم getUserMedia.'
-        );
+function getTagValue(tags, name) {
+    if (!Array.isArray(tags)) {
+        return null;
     }
 
-    voiceLog(
-        'طلب صلاحية الميكروفون...'
+    const tag = tags.find(
+        item => item[0] === name
     );
+
+    return tag ? tag[1] : null;
+}
+
+function handleIncomingReply(event) {
+    const targetId = getTagValue(
+        event.tags,
+        'e'
+    );
+
+    if (!targetId) {
+        return;
+    }
+
+    const stats = getReactionStats(targetId);
+
+    if (!stats) {
+        return;
+    }
+
+    const replyCount =
+        Number(stats.replyCount.dataset.count || 0);
+
+    /*
+     * لا نكرر نفس الرد.
+     */
+    if (
+        document.querySelector(
+            `[data-reply-id="${CSS.escape(event.id)}"]`
+        )
+    ) {
+        return;
+    }
+
+    stats.replyCount.dataset.count =
+        String(replyCount + 1);
+
+    stats.replyCount.textContent =
+        String(replyCount + 1);
+
+    /*
+     * عرض الرد مباشرة أسفل المنشور.
+     */
+    const repliesContainer =
+        stats.card.querySelector(
+            `[data-replies="${CSS.escape(targetId)}"]`
+        );
+
+    if (!repliesContainer) {
+        return;
+    }
+
+    const reply = document.createElement('div');
+
+    reply.dataset.replyId = event.id;
+
+    reply.className =
+        'bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-sm';
+
+    reply.innerHTML = `
+        <div class="text-xs text-gray-400 mb-1">
+            ${escapeHtml(event.pubkey.slice(0, 8))}...
+        </div>
+
+        <div class="text-gray-700 dark:text-gray-200">
+            ${escapeHtml(event.content)}
+        </div>
+    `;
+
+    repliesContainer.appendChild(reply);
+
+    console.log(
+        '[Reply] رد جديد:',
+        event.id
+    );
+}
+
+async function replyToPost(
+    targetId,
+    targetPubkey
+) {
+    const content = prompt('اكتب ردك:');
+
+    if (!content || !content.trim()) {
+        return;
+    }
+
+    const cleanContent = content.trim();
 
     try {
-        const stream =
-            await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                    channelCount: 1
-                },
-                video: false
-            });
+        const eventTemplate = {
+            kind: 1,
+            created_at: Math.floor(Date.now() / 1000),
 
-        voiceLog(
-            'تم الحصول على الميكروفون بنجاح.'
+            tags: [
+                [
+                    'e',
+                    targetId,
+                    '',
+                    'reply'
+                ],
+                [
+                    'p',
+                    targetPubkey
+                ],
+                [
+                    't',
+                    APP_TAG
+                ]
+            ],
+
+            content: cleanContent
+        };
+
+        const signedEvent =
+            NostrTools.finalizeEvent(
+                eventTemplate,
+                secretKeyHex
+            );
+
+        /*
+         * Optimistic UI للرد:
+         * نعرضه فوراً.
+         */
+        handleIncomingReply(
+            signedEvent
         );
 
-        return stream;
+        await pool.publish(
+            RELAYS,
+            signedEvent
+        );
+
+        showToast(
+            'تم إرسال الرد',
+            'success'
+        );
 
     } catch (error) {
-        voiceError(
-            'فشل الميكروفون:',
+        console.error(
+            '[Reply] فشل الرد:',
             error
         );
 
-        if (
-            error.name ===
-            'NotAllowedError'
-        ) {
-            throw new Error(
-                'المتصفح رفض صلاحية الميكروفون.'
-            );
-        }
-
-        if (
-            error.name ===
-            'NotFoundError'
-        ) {
-            throw new Error(
-                'لم يتم العثور على ميكروفون.'
-            );
-        }
-
-        if (
-            error.name ===
-            'NotReadableError'
-        ) {
-            throw new Error(
-                'الميكروفون مستخدم بواسطة تطبيق آخر.'
-            );
-        }
-
-        throw error;
-    }
-}
-
-
-/* =========================================================
-   إنشاء PeerJS
-========================================================= */
-
-function createPeer() {
-    return new Promise(
-        (resolve, reject) => {
-
-            const peerId =
-                generatePeerId();
-
-            voiceLog(
-                'إنشاء PeerJS:',
-                peerId
-            );
-
-            let resolved = false;
-
-            try {
-                peer =
-                    new Peer(
-                        peerId,
-                        {
-                            host: '0.peerjs.com',
-                            port: 443,
-                            secure: true,
-
-                            config:
-                                PEER_CONFIG,
-
-                            debug: 2,
-
-                            pingInterval: 5000
-                        }
-                    );
-
-                peer.on(
-                    'open',
-                    id => {
-                        currentPeerId = id;
-
-                        voiceLog(
-                            'PeerJS متصل بالـPeerServer:',
-                            id
-                        );
-
-                        resolved = true;
-
-                        resolve(id);
-                    }
-                );
-
-                peer.on(
-                    'call',
-                    call => {
-                        voiceLog(
-                            'Incoming call من:',
-                            call.peer
-                        );
-
-                        handleIncomingCall(
-                            call
-                        );
-                    }
-                );
-
-                peer.on(
-                    'error',
-                    error => {
-                        voiceError(
-                            'PeerJS error:',
-                            error.type,
-                            error.message
-                        );
-
-                        handlePeerError(
-                            error
-                        );
-
-                        if (
-                            !resolved
-                        ) {
-                            resolved = true;
-                            reject(error);
-                        }
-                    }
-                );
-
-                peer.on(
-                    'disconnected',
-                    id => {
-                        voiceError(
-                            'PeerJS disconnected:',
-                            id
-                        );
-
-                        if (
-                            isInRoom &&
-                            peer &&
-                            peer.disconnected
-                        ) {
-                            setTimeout(
-                                () => {
-                                    try {
-                                        if (
-                                            peer &&
-                                            peer.disconnected
-                                        ) {
-                                            voiceLog(
-                                                'محاولة إعادة اتصال PeerJS...'
-                                            );
-
-                                            peer.reconnect();
-                                        }
-                                    } catch (
-                                        reconnectError
-                                    ) {
-                                        voiceError(
-                                            'فشل reconnect:',
-                                            reconnectError
-                                        );
-                                    }
-                                },
-                                1500
-                            );
-                        }
-                    }
-                );
-
-                peer.on(
-                    'close',
-                    () => {
-                        voiceLog(
-                            'تم إغلاق PeerJS.'
-                        );
-                    }
-                );
-
-            } catch (error) {
-                voiceError(
-                    'فشل إنشاء PeerJS:',
-                    error
-                );
-
-                reject(error);
-            }
-        }
-    );
-}
-
-
-/* =========================================================
-   معالجة أخطاء PeerJS
-========================================================= */
-
-function handlePeerError(error) {
-    const type =
-        error?.type || '';
-
-    const messages = {
-        'browser-incompatible':
-            'المتصفح لا يدعم WebRTC.',
-        'disconnected':
-            'انقطع اتصال PeerJS.',
-        'network':
-            'مشكلة شبكة مع PeerServer.',
-        'server-error':
-            'خادم PeerJS رفض الاتصال.',
-        'socket-error':
-            'تعذر فتح WebSocket مع PeerJS.',
-        'socket-closed':
-            'اتصال PeerJS أغلق.',
-        'unavailable-id':
-            'معرّف Peer مستخدم بالفعل.',
-        'webrtc':
-            'فشل اتصال WebRTC.',
-        'peer-unavailable':
-            'الطرف الآخر لم يعد متاحاً.'
-    };
-
-    const message =
-        messages[type] ||
-        `خطأ WebRTC/PeerJS: ${type || 'unknown'}`;
-
-    voiceError(
-        message,
-        error
-    );
-
-    if (isInRoom) {
         showToast(
-            message,
+            'فشل إرسال الرد: ' +
+            getErrorMessage(error),
             'error'
         );
     }
@@ -1327,8 +810,248 @@ function handlePeerError(error) {
 
 
 /* =========================================================
+   =========================================================
+   غرف الصوت WebRTC
+   =========================================================
+   ========================================================= */
+
+
+/*
+ * إعداد ICE قوي نسبياً للاتصالات المباشرة.
+ *
+ * STUN:
+ * يساعد المتصفح على معرفة عنوانه العام.
+ *
+ * TURN:
+ * يستخدم عندما يكون الاتصال المباشر بين الطرفين
+ * مستحيلاً بسبب NAT/Firewall.
+ *
+ * ملاحظة:
+ * الخوادم العامة ليست ضماناً 100% للإنتاج.
+ * في الإنتاج الأفضل استخدام TURN خاص بك.
+ */
+const WEBRTC_CONFIG = {
+    iceServers: [
+        {
+            urls: [
+                'stun:stun.l.google.com:19302',
+                'stun:stun1.l.google.com:19302',
+                'stun:stun2.l.google.com:19302',
+                'stun:stun3.l.google.com:19302',
+                'stun:stun4.l.google.com:19302'
+            ]
+        },
+
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelay',
+            credential: 'openrelay'
+        },
+
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelay',
+            credential: 'openrelay'
+        },
+
+        {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelay',
+            credential: 'openrelay'
+        }
+    ],
+
+    iceTransportPolicy: 'all',
+
+    bundlePolicy: 'max-bundle',
+
+    rtcpMuxPolicy: 'require'
+};
+
+
+/* =========================================================
+   إنشاء PeerJS
+   ========================================================= */
+
+function createPeer() {
+    return new Promise((resolve, reject) => {
+        if (peer && !peer.destroyed) {
+            resolve(peer);
+            return;
+        }
+
+        const peerId =
+            'pulse-' +
+            pk.slice(0, 8) +
+            '-' +
+            Math.random()
+                .toString(36)
+                .slice(2, 8);
+
+        console.log(
+            '[WebRTC] إنشاء Peer:',
+            peerId
+        );
+
+        let settled = false;
+
+        try {
+            peer = new Peer(
+                peerId,
+                {
+                    /*
+                     * نستخدم خادم PeerJS للـ signaling
+                     * وليس لنقل الصوت.
+                     */
+                    host: '0.peerjs.com',
+                    port: 443,
+                    secure: true,
+                    path: '/',
+                    debug: 2,
+
+                    /*
+                     * أهم جزء:
+                     * STUN/TURN للـ ICE.
+                     */
+                    config: WEBRTC_CONFIG
+                }
+            );
+
+            peer.on(
+                'open',
+                id => {
+                    myPeerId = id;
+
+                    console.log(
+                        '[WebRTC] Peer مفتوح:',
+                        id
+                    );
+
+                    if (!settled) {
+                        settled = true;
+                        resolve(peer);
+                    }
+                }
+            );
+
+            peer.on(
+                'call',
+                call => {
+                    console.log(
+                        '[WebRTC] Incoming call من:',
+                        call.peer
+                    );
+
+                    handleIncomingCall(call);
+                }
+            );
+
+            peer.on(
+                'error',
+                error => {
+                    console.error(
+                        '[WebRTC] PeerJS Error:',
+                        error
+                    );
+
+                    console.error(
+                        '[WebRTC] نوع الخطأ:',
+                        error.type
+                    );
+
+                    if (!settled) {
+                        settled = true;
+                        reject(error);
+                    }
+
+                    handlePeerError(error);
+                }
+            );
+
+            peer.on(
+                'disconnected',
+                () => {
+                    console.warn(
+                        '[WebRTC] PeerJS disconnected'
+                    );
+
+                    showToast(
+                        'انقطع اتصال خدمة الإشارة الصوتية',
+                        'error'
+                    );
+                }
+            );
+
+            peer.on(
+                'close',
+                () => {
+                    console.warn(
+                        '[WebRTC] PeerJS connection closed'
+                    );
+                }
+            );
+
+        } catch (error) {
+            console.error(
+                '[WebRTC] فشل إنشاء Peer:',
+                error
+            );
+
+            reject(error);
+        }
+    });
+}
+
+function handlePeerError(error) {
+    const type = error?.type || '';
+    const message = getErrorMessage(error);
+
+    if (
+        type === 'network' ||
+        type === 'server-error' ||
+        type === 'socket-error'
+    ) {
+        showToast(
+            'مشكلة في شبكة الاتصال الصوتي: ' +
+            message,
+            'error'
+        );
+
+        return;
+    }
+
+    if (
+        type === 'unavailable-id'
+    ) {
+        showToast(
+            'معرف الاتصال الصوتي مستخدم، حاول مرة أخرى',
+            'error'
+        );
+
+        return;
+    }
+
+    if (
+        type === 'browser-incompatible'
+    ) {
+        showToast(
+            'المتصفح لا يدعم WebRTC بشكل صحيح',
+            'error'
+        );
+
+        return;
+    }
+
+    showToast(
+        'خطأ WebRTC: ' + message,
+        'error'
+    );
+}
+
+
+/* =========================================================
    دخول الغرفة
-========================================================= */
+   ========================================================= */
 
 async function toggleRoom(forceLeave = false) {
     if (forceLeave) {
@@ -1336,189 +1059,256 @@ async function toggleRoom(forceLeave = false) {
         return;
     }
 
-    if (isInRoom) {
+    if (isJoiningRoom) {
+        return;
+    }
+
+    /*
+     * لو نحن بالفعل داخل الغرفة:
+     * الزر يعني مغادرة.
+     */
+    if (currentRoom) {
         await leaveRoom();
         return;
     }
 
-    const input =
-        document.getElementById(
-            'room-input'
-        );
+    const input = $('room-input');
 
-    const room =
-        normalizeRoomName(
-            input?.value
+    if (!input) {
+        console.error(
+            '[Room] room-input غير موجود'
         );
+        return;
+    }
 
-    if (!room) {
+    const roomName =
+        safeRoomName(input.value);
+
+    if (!roomName) {
         showToast(
-            'اكتب اسم الغرفة أولاً.',
+            'اكتب اسم الغرفة أولاً',
             'error'
         );
-
-        input?.focus();
-
         return;
     }
 
-    await joinRoom(room);
+    await joinRoom(roomName);
 }
 
-
-/* =========================================================
-   Join Room
-========================================================= */
-
 async function joinRoom(roomName) {
-    if (isInRoom) {
+    if (isJoiningRoom) {
         return;
     }
 
-    const room =
-        normalizeRoomName(roomName);
+    isJoiningRoom = true;
 
-    if (!room) {
-        return;
-    }
-
-    voiceLog(
-        'بدء الدخول إلى الغرفة:',
-        room
-    );
-
-    showToast(
-        'جاري تشغيل الميكروفون والاتصال بالغرفة...',
-        'info'
+    console.log(
+        '[Room] محاولة دخول:',
+        roomName
     );
 
     try {
         /*
-         * 1. الميكروفون أولاً.
+         * -------------------------------------------------
+         * 1. الحصول على المايك
+         * -------------------------------------------------
          */
-        localStream =
-            await requestMicrophone();
+
+        if (
+            !navigator.mediaDevices ||
+            !navigator.mediaDevices.getUserMedia
+        ) {
+            throw new Error(
+                'المتصفح لا يدعم getUserMedia أو الصفحة ليست HTTPS'
+            );
+        }
+
+        showToast(
+            'جاري تشغيل الميكروفون...',
+            'info'
+        );
+
+        try {
+            localStream =
+                await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        channelCount: 1
+                    }
+                });
+
+        } catch (micError) {
+            console.error(
+                '[Room] فشل المايك:',
+                micError
+            );
+
+            if (
+                micError.name === 'NotAllowedError'
+            ) {
+                throw new Error(
+                    'تم رفض صلاحية الميكروفون. اسمح للمتصفح باستخدام الميكروفون.'
+                );
+            }
+
+            if (
+                micError.name === 'NotFoundError'
+            ) {
+                throw new Error(
+                    'لم يتم العثور على ميكروفون في الجهاز.'
+                );
+            }
+
+            if (
+                micError.name === 'NotReadableError'
+            ) {
+                throw new Error(
+                    'الميكروفون مستخدم بواسطة تطبيق أو متصفح آخر.'
+                );
+            }
+
+            throw micError;
+        }
+
+        console.log(
+            '[Room] المايك يعمل:',
+            localStream.getAudioTracks().map(track => ({
+                label: track.label,
+                enabled: track.enabled,
+                readyState: track.readyState
+            }))
+        );
+
 
         /*
-         * 2. إعداد الحالة قبل PeerJS.
+         * -------------------------------------------------
+         * 2. إنشاء PeerJS
+         * -------------------------------------------------
          */
-        currentRoom = room;
-        isInRoom = true;
-        isMuted = false;
+
+        await createPeer();
+
+        if (!peer || peer.destroyed) {
+            throw new Error(
+                'تعذر إنشاء PeerJS'
+            );
+        }
+
+
+        /*
+         * -------------------------------------------------
+         * 3. تثبيت حالة الغرفة
+         * -------------------------------------------------
+         */
+
+        currentRoom = roomName;
 
         localStorage.setItem(
-            activeRoomStorageKey,
+            'active_room',
             currentRoom
         );
 
-        localStorage.setItem(
-            activeVoiceStorageKey,
-            '1'
-        );
+        announcedPeers.clear();
+
+        /*
+         * -------------------------------------------------
+         * 4. تحديث الواجهة
+         * -------------------------------------------------
+         */
 
         updateRoomUI(true);
 
         /*
-         * 3. تشغيل AudioContext بعد Gesture المستخدم.
+         * -------------------------------------------------
+         * 5. تشغيل الصوت الخلفي
+         * -------------------------------------------------
          */
-        await startBackgroundAudioEngine();
+
+        startBackgroundAudioEngine();
 
         /*
-         * 4. Wake Lock.
+         * -------------------------------------------------
+         * 6. منع إيقاف الشاشة قدر الإمكان
+         * -------------------------------------------------
          */
-        await requestWakeLock();
+
+        requestSystemLock();
 
         /*
-         * 5. إنشاء Peer جديد.
+         * -------------------------------------------------
+         * 7. بدء VAD
+         * -------------------------------------------------
          */
-        await createPeer();
+
+        setupVAD();
 
         /*
-         * 6. بدء الاستماع قبل الإعلان.
+         * -------------------------------------------------
+         * 8. الإعلان عن وجودنا في Nostr
+         * -------------------------------------------------
          */
-        startRoomPresenceSubscription();
 
-        /*
-         * 7. الإعلان عن Peer ID.
-         */
         await announcePresence();
 
         /*
-         * 8. الإعلان عن الغرفة نفسها.
+         * -------------------------------------------------
+         * 9. الاستماع لباقي الموجودين
+         * -------------------------------------------------
          */
-        await publishRoomActivity();
 
-        /*
-         * 9. Heartbeat.
-         */
-        startPresenceHeartbeat();
-
-        /*
-         * 10. VAD.
-         */
-        setupVoiceActivityDetection();
+        listenForPeers();
 
         showToast(
-            `تم دخول غرفة "${getRoomDisplayName(room)}"`,
+            'دخلت غرفة "' + roomName + '" 🎙️',
             'success'
         );
 
-        voiceLog(
-            'تم الدخول بنجاح:',
-            room,
-            currentPeerId
+        console.log(
+            '[Room] تم الدخول بنجاح:',
+            roomName
         );
 
     } catch (error) {
-        voiceError(
-            'Join Room Error:',
+        console.error(
+            '[Room] فشل دخول الغرفة:',
             error
         );
 
         showToast(
-            error?.message ||
-            'فشل الدخول إلى الغرفة.',
+            'فشل دخول الغرفة: ' +
+            getErrorMessage(error),
             'error'
         );
 
-        await cleanupVoiceState(
-            false
-        );
+        /*
+         * تنظيف أي موارد تم تشغيلها قبل الفشل.
+         */
+        cleanupRoomResources(false);
+
+    } finally {
+        isJoiningRoom = false;
     }
 }
 
 
 /* =========================================================
-   واجهة الغرفة
-========================================================= */
+   UI الغرفة
+   ========================================================= */
 
-function updateRoomUI(active) {
-    const btn =
-        document.getElementById(
-            'btn-join-room'
-        );
+function updateRoomUI(joined) {
+    const btn = $('btn-join-room');
+    const input = $('room-input');
+    const activeUi = $('active-room-ui');
 
-    const input =
-        document.getElementById(
-            'room-input'
-        );
+    if (joined) {
+        if (activeUi) {
+            activeUi.classList.remove('hidden');
+        }
 
-    const activeUi =
-        document.getElementById(
-            'active-room-ui'
-        );
-
-    const roomName =
-        document.getElementById(
-            'current-room-name'
-        );
-
-    if (
-        active
-    ) {
         if (btn) {
-            btn.textContent =
-                'مغادرة';
+            btn.textContent = 'مغادرة';
 
             btn.classList.remove(
                 'bg-white',
@@ -1533,24 +1323,20 @@ function updateRoomUI(active) {
 
         if (input) {
             input.disabled = true;
-            input.value =
-                currentRoom || '';
         }
 
-        if (roomName) {
-            roomName.textContent =
-                `غرفة: ${getRoomDisplayName(currentRoom)}`;
+        if ($('current-room-name')) {
+            $('current-room-name').textContent =
+                `غرفة: ${currentRoom}`;
         }
-
-        activeUi?.classList.remove(
-            'hidden'
-        );
 
     } else {
+        if (activeUi) {
+            activeUi.classList.add('hidden');
+        }
 
         if (btn) {
-            btn.textContent =
-                'دخول';
+            btn.textContent = 'دخول';
 
             btn.classList.remove(
                 'bg-red-500',
@@ -1566,308 +1352,290 @@ function updateRoomUI(active) {
         if (input) {
             input.disabled = false;
         }
-
-        activeUi?.classList.add(
-            'hidden'
-        );
     }
-
-    updateMuteUI();
 }
 
 
 /* =========================================================
-   إعلان وجود Peer داخل الغرفة
-========================================================= */
+   Nostr Signaling
+   ========================================================= */
+
+function roomTag() {
+    /*
+     * Tag فريد جداً للغرفة.
+     *
+     * لا نستخدم مجرد room لأن تطبيقات أخرى على Nostr
+     * قد تستخدم نفس الاسم.
+     */
+    return `${APP_TAG}:voice:${safeRoomName(currentRoom)}`;
+}
 
 async function announcePresence() {
-    if (
-        !isInRoom ||
-        !currentRoom ||
-        !currentPeerId
-    ) {
+    if (!currentRoom || !myPeerId) {
         return;
     }
 
-    const roomKey =
-        currentRoom;
+    const tag = roomTag();
 
     const eventTemplate = {
-        /*
-         * Ephemeral Event.
-         * لا نريد تخزين Peer IDs القديمة في Relay.
-         */
-        kind: 20000,
+        kind: ROOM_EVENT_KIND,
 
         created_at:
-            Math.floor(
-                Date.now() / 1000
-            ),
+            Math.floor(Date.now() / 1000),
 
         tags: [
-            ['t', ROOM_TAG],
-            ['room', roomKey],
-            ['peer', currentPeerId]
+            ['t', tag],
+            ['room', safeRoomName(currentRoom)]
         ],
 
         content: JSON.stringify({
-            version: 2,
-            room: roomKey,
-            peerId: currentPeerId,
-            pubkey: pk,
-            npub: npub
+            peerId: myPeerId,
+            room: safeRoomName(currentRoom),
+            npub: npub,
+            timestamp: Date.now()
         })
     };
 
     try {
-        await publishEvent(
-            eventTemplate
+        /*
+         * مهم:
+         * finalizeEvent في nostr-tools v2
+         * يأخذ Hex String مباشرة.
+         */
+        const event =
+            NostrTools.finalizeEvent(
+                eventTemplate,
+                secretKeyHex
+            );
+
+        console.log(
+            '[Nostr Room] نشر presence:',
+            {
+                eventId: event.id,
+                room: currentRoom,
+                tag,
+                peerId: myPeerId
+            }
         );
 
-        voiceLog(
-            'تم إعلان Peer ID:',
-            currentPeerId,
-            'في الغرفة:',
-            roomKey
+        await pool.publish(
+            RELAYS,
+            event
         );
 
     } catch (error) {
-        /*
-         * الإعلان فشل لا يعني أن WebRTC فشل.
-         */
-        voiceError(
-            'فشل نشر Presence:',
+        console.error(
+            '[Nostr Room] فشل نشر presence:',
             error
+        );
+
+        showToast(
+            'تم تشغيل الغرفة لكن تعذر إعلان وجودك للشبكة',
+            'error'
         );
     }
 }
 
 
 /* =========================================================
-   الاشتراك في Peers الغرفة
-========================================================= */
+   الاستماع للمشاركين
+   ========================================================= */
 
-function startRoomPresenceSubscription() {
-    if (roomPresenceSub) {
-        try {
-            roomPresenceSub.close();
-        } catch (_) {}
-    }
-
-    if (
-        !currentRoom
-    ) {
+function listenForPeers() {
+    if (!currentRoom) {
         return;
     }
 
-    voiceLog(
-        'بدء الاستماع إلى Peers:',
+    if (roomSubscription) {
+        try {
+            roomSubscription.close();
+        } catch (error) {
+            console.log(
+                '[Room] تعذر إغلاق اشتراك الغرفة السابق'
+            );
+        }
+    }
+
+    const tag = roomTag();
+
+    console.log(
+        '[Nostr Room] الاستماع للغرفة:',
         currentRoom
     );
 
-    roomPresenceSub =
-        pool.subscribeMany(
-            RELAYS,
+    console.log(
+        '[Nostr Room] Tag:',
+        tag
+    );
 
-            [
+    /*
+     * subscribeMany:
+     *
+     * نطلب أحداث kind 20000 التي تحمل
+     * #t = tag الخاص بهذه الغرفة.
+     *
+     * هذا يجعل كل شخص جديد يعلن نفسه فوراً،
+     * كما نحصل على المشاركين الموجودين بالفعل.
+     */
+    try {
+        roomSubscription =
+            pool.subscribeMany(
+                RELAYS,
+                [
+                    {
+                        kinds: [
+                            ROOM_EVENT_KIND
+                        ],
+
+                        '#t': [tag],
+
+                        limit: 100
+                    }
+                ],
                 {
-                    kinds: [20000],
+                    onevent: event => {
+                        handleRoomPresence(event);
+                    },
 
-                    '#t': [ROOM_TAG],
+                    oneose: () => {
+                        console.log(
+                            '[Nostr Room] تم تحميل المشاركين الحاليين'
+                        );
+                    },
 
-                    '#room': [
-                        currentRoom
-                    ],
-
-                    limit: 100
+                    onclose: () => {
+                        console.log(
+                            '[Nostr Room] اشتراك الغرفة أغلق'
+                        );
+                    }
                 }
-            ],
+            );
 
-            {
-                onevent(event) {
-                    handlePeerPresence(
-                        event
-                    );
-                },
-
-                oneose() {
-                    voiceLog(
-                        'انتهى تحميل Presence القديم من الـRelays.'
-                    );
-                },
-
-                onclose() {
-                    voiceLog(
-                        'تم إغلاق Presence subscription.'
-                    );
-                }
-            }
+    } catch (error) {
+        console.error(
+            '[Nostr Room] subscribeMany Error:',
+            error
         );
+
+        showToast(
+            'فشل نظام اكتشاف المشاركين: ' +
+            getErrorMessage(error),
+            'error'
+        );
+    }
 }
 
-
-/* =========================================================
-   معالجة Peer Presence
-========================================================= */
-
-function handlePeerPresence(event) {
-    if (!isInRoom) {
+function handleRoomPresence(event) {
+    if (!currentRoom) {
         return;
     }
 
-    if (
-        event.pubkey === pk
-    ) {
+    if (!event || !event.content) {
         return;
     }
 
-    const room =
-        getTag(
-            event,
-            'room'
-        );
-
-    if (
-        room !== currentRoom
-    ) {
+    if (event.pubkey === pk) {
         return;
     }
 
     let data;
 
     try {
-        data =
-            JSON.parse(
-                event.content
-            );
-    } catch (error) {
-        voiceError(
-            'Presence content غير صالح:',
+        data = JSON.parse(
             event.content
         );
-
+    } catch (error) {
+        console.warn(
+            '[Nostr Room] Presence غير صالح:',
+            event.content
+        );
         return;
     }
 
-    const targetPeerId =
-        data.peerId ||
-        getTag(
-            event,
-            'peer'
-        );
-
-    if (!targetPeerId) {
-        voiceError(
-            'Presence بدون Peer ID:',
-            event.id
-        );
-
+    if (!data.peerId) {
         return;
     }
 
     if (
-        targetPeerId === currentPeerId
+        data.room &&
+        safeRoomName(data.room) !==
+        safeRoomName(currentRoom)
     ) {
         return;
     }
 
-    knownRoomPeers.set(
-        targetPeerId,
+    if (
+        announcedPeers.has(data.peerId)
+    ) {
+        return;
+    }
+
+    announcedPeers.add(data.peerId);
+
+    console.log(
+        '[Room] مشارك جديد:',
         {
-            peerId: targetPeerId,
-            pubkey: event.pubkey,
-            npub:
-                data.npub ||
-                event.pubkey.slice(0, 8),
-            lastSeen:
-                Date.now()
+            peerId: data.peerId,
+            npub: data.npub
         }
     );
 
-    updatePeerListUI();
-
     /*
-     * لا نسمح باتصالين بين نفس الطرفين.
+     * منع إنشاء اتصالين في الاتجاهين.
+     *
+     * الطرف الذي يملك Peer ID الأصغر هو الذي يبدأ المكالمة.
+     *
+     * هذا مهم جداً لأن الطرفين يحصلان على Presence
+     * في نفس الوقت.
      */
     if (
-        activeCalls.has(
-            targetPeerId
-        )
+        myPeerId &&
+        myPeerId < data.peerId
     ) {
-        return;
-    }
-
-    /*
-     * Deterministic caller:
-     * طرف واحد فقط يبدأ الاتصال.
-     *
-     * هذا يمنع:
-     * A -> B
-     * B -> A
-     * في نفس اللحظة.
-     */
-    const shouldCall =
-        pk < event.pubkey;
-
-    if (!shouldCall) {
-        voiceLog(
-            'Presence وصل، لكن الطرف الآخر هو initiator:',
-            targetPeerId
+        connectToPeer(
+            data.peerId,
+            data.npub || data.peerId
         );
-
-        return;
     }
-
-    connectToPeer(
-        targetPeerId,
-        data.npub ||
-            event.pubkey.slice(0, 8)
-    );
 }
 
 
 /* =========================================================
-   الاتصال بطرف آخر
-========================================================= */
+   إنشاء المكالمة
+   ========================================================= */
 
 function connectToPeer(
     targetPeerId,
     displayName
 ) {
-    if (
-        !isInRoom ||
-        !peer ||
-        peer.destroyed
-    ) {
-        return;
-    }
-
-    if (
-        !localStream
-    ) {
-        voiceError(
-            'لا يوجد localStream.'
+    if (!peer || peer.destroyed) {
+        console.error(
+            '[WebRTC] لا يمكن الاتصال: Peer غير جاهز'
         );
-
         return;
     }
 
-    if (
-        targetPeerId === currentPeerId
-    ) {
+    if (!localStream) {
+        console.error(
+            '[WebRTC] لا يمكن الاتصال: localStream غير موجود'
+        );
         return;
     }
 
-    if (
-        activeCalls.has(
-            targetPeerId
-        )
-    ) {
+    if (!currentRoom) {
         return;
     }
 
-    voiceLog(
-        'بدء الاتصال بـ:',
+    if (targetPeerId === myPeerId) {
+        return;
+    }
+
+    if (activeCalls.has(targetPeerId)) {
+        return;
+    }
+
+    console.log(
+        '[WebRTC] بدء اتصال مع:',
         targetPeerId
     );
 
@@ -1881,31 +1649,33 @@ function connectToPeer(
                 {
                     metadata: {
                         room: currentRoom,
-                        pubkey: pk,
-                        npub: npub
+                        caller: myPeerId
                     }
                 }
             );
 
     } catch (error) {
-        voiceError(
-            'peer.call فشل:',
-            targetPeerId,
+        console.error(
+            '[WebRTC] peer.call فشل:',
             error
+        );
+
+        showToast(
+            'تعذر بدء الاتصال الصوتي مع مشارك',
+            'error'
         );
 
         return;
     }
 
     if (!call) {
-        voiceError(
-            'PeerJS لم يعطِ MediaConnection.'
+        console.error(
+            '[WebRTC] PeerJS لم ينشئ Call'
         );
-
         return;
     }
 
-    handleCall(
+    handleCallEvents(
         call,
         displayName
     );
@@ -1914,109 +1684,110 @@ function connectToPeer(
 
 /* =========================================================
    Incoming Call
-========================================================= */
+   ========================================================= */
 
-function handleIncomingCall(
-    call
-) {
-    if (
-        !isInRoom ||
-        !localStream
-    ) {
-        voiceError(
-            'Incoming call بينما الغرفة غير جاهزة:',
+function handleIncomingCall(call) {
+    if (!currentRoom) {
+        console.log(
+            '[WebRTC] تجاهل اتصال لأن المستخدم خارج الغرفة'
+        );
+
+        try {
+            call.close();
+        } catch (error) {}
+
+        return;
+    }
+
+    if (!localStream) {
+        console.error(
+            '[WebRTC] Incoming call لكن localStream غير موجود'
+        );
+
+        try {
+            call.close();
+        } catch (error) {}
+
+        return;
+    }
+
+    /*
+     * لو الاتصال موجود بالفعل، لا ننشئ نسخة ثانية.
+     */
+    if (activeCalls.has(call.peer)) {
+        console.log(
+            '[WebRTC] اتصال موجود بالفعل مع:',
             call.peer
         );
 
         try {
             call.close();
-        } catch (_) {}
+        } catch (error) {}
 
         return;
     }
 
-    voiceLog(
-        'الرد على Incoming Call:',
+    console.log(
+        '[WebRTC] الرد على المكالمة من:',
         call.peer
     );
 
     try {
-        call.answer(
-            localStream
-        );
+        call.answer(localStream);
 
-        handleCall(
+        handleCallEvents(
             call,
-            call.metadata?.npub ||
-            call.peer.slice(0, 8)
+            call.peer
         );
 
     } catch (error) {
-        voiceError(
-            'call.answer فشل:',
+        console.error(
+            '[WebRTC] فشل الرد على المكالمة:',
             error
         );
 
         try {
             call.close();
-        } catch (_) {}
+        } catch (closeError) {}
     }
 }
 
 
 /* =========================================================
-   إدارة MediaConnection
-========================================================= */
+   إدارة المكالمة
+   ========================================================= */
 
-function handleCall(
+function handleCallEvents(
     call,
     displayName
 ) {
-    const peerId =
-        call.peer;
-
-    if (
-        activeCalls.has(peerId)
-    ) {
-        /*
-         * لو وصلنا Call ثاني من نفس الشخص،
-         * نغلقه ونحتفظ بالأول.
-         */
-        try {
-            call.close();
-        } catch (_) {}
-
+    if (!call) {
         return;
     }
 
+    const peerId = call.peer;
+
     activeCalls.set(
         peerId,
-        {
-            call,
-            displayName:
-                displayName ||
-                peerId.slice(0, 8)
-        }
+        call
     );
 
-    updatePeerListUI();
-
-    voiceLog(
-        'MediaConnection registered:',
+    console.log(
+        '[WebRTC] Call registered:',
         peerId
     );
 
     call.on(
         'stream',
         remoteStream => {
-            voiceLog(
-                'تم استلام Remote Stream من:',
+            console.log(
+                '[WebRTC] تم استقبال Remote Stream:',
                 peerId
             );
 
-            attachRemoteAudio(
-                peerId,
+            addPeerAudio(
                 remoteStream,
+                peerId,
                 displayName
             );
         }
@@ -2025,8 +1796,8 @@ function handleCall(
     call.on(
         'close',
         () => {
-            voiceLog(
-                'Call closed:',
+            console.log(
+                '[WebRTC] المكالمة أغلقت:',
                 peerId
             );
 
@@ -2039,10 +1810,16 @@ function handleCall(
     call.on(
         'error',
         error => {
-            voiceError(
-                'MediaConnection Error:',
+            console.error(
+                '[WebRTC] Call Error:',
                 peerId,
                 error
+            );
+
+            showToast(
+                'انقطع اتصال أحد المشاركين: ' +
+                getErrorMessage(error),
+                'error'
             );
 
             removePeerCall(
@@ -2050,74 +1827,26 @@ function handleCall(
             );
         }
     );
-
-    /*
-     * PeerJS 1.5.2 يمرر RTCPeerConnection
-     * ويمكننا مراقبة ICE.
-     */
-    try {
-        const connection =
-            call.peerConnection;
-
-        if (
-            connection
-        ) {
-            connection.oniceconnectionstatechange =
-                () => {
-
-                    voiceLog(
-                        'ICE state:',
-                        peerId,
-                        connection.iceConnectionState
-                    );
-
-                    if (
-                        connection.iceConnectionState ===
-                        'failed'
-                    ) {
-                        voiceError(
-                            'ICE FAILED:',
-                            peerId
-                        );
-
-                        showToast(
-                            'تعذر إنشاء اتصال WebRTC مع أحد المشاركين. قد تكون الشبكة خلف NAT صعب.',
-                            'error'
-                        );
-                    }
-
-                    if (
-                        connection.iceConnectionState ===
-                        'connected' ||
-                        connection.iceConnectionState ===
-                        'completed'
-                    ) {
-                        voiceLog(
-                            'WebRTC connected:',
-                            peerId
-                        );
-                    }
-                };
-        }
-
-    } catch (error) {
-        voiceError(
-            'ICE monitor error:',
-            error
-        );
-    }
 }
 
 
 /* =========================================================
-   تشغيل الصوت القادم
-========================================================= */
+   استقبال الصوت
+   ========================================================= */
 
-function attachRemoteAudio(
-    peerId,
+function addPeerAudio(
     stream,
+    peerId,
     displayName
 ) {
+    if (!stream) {
+        console.error(
+            '[Audio] Remote stream فارغ:',
+            peerId
+        );
+        return;
+    }
+
     let audio =
         document.getElementById(
             `audio-${peerId}`
@@ -2125,95 +1854,81 @@ function attachRemoteAudio(
 
     if (!audio) {
         audio =
-            document.createElement(
-                'audio'
-            );
+            document.createElement('audio');
 
         audio.id =
             `audio-${peerId}`;
 
         audio.autoplay = true;
         audio.playsInline = true;
+        audio.setAttribute(
+            'playsinline',
+            ''
+        );
+
+        /*
+         * مهم جداً:
+         * لا نستخدم controls للمستخدم.
+         */
         audio.controls = false;
 
         /*
-         * لا نضع volume = 0.
+         * volume = 1
+         * حتى لا تكون المشكلة مجرد volume = 0.
          */
         audio.volume = 1;
 
-        audio.className =
-            'hidden';
+        /*
+         * نضعه في audio-container إن وجد.
+         */
+        const container =
+            $('audio-container');
 
-        document.body.appendChild(
-            audio
-        );
+        if (container) {
+            container.appendChild(audio);
+        } else {
+            document.body.appendChild(audio);
+        }
     }
 
-    audio.srcObject =
-        stream;
+    audio.srcObject = stream;
 
     /*
-     * play() مهم لأن بعض المتصفحات لا تشغل
-     * MediaStream تلقائياً دائماً.
+     * تشغيل الصوت فور وصول stream.
      */
     const playPromise =
         audio.play();
 
-    if (
-        playPromise &&
-        typeof playPromise.then ===
-        'function'
-    ) {
+    if (playPromise) {
         playPromise
             .then(() => {
-                voiceLog(
-                    'Remote audio بدأ التشغيل:',
+                console.log(
+                    '[Audio] الصوت يعمل:',
                     peerId
                 );
 
-                enableMediaSession();
+                updatePeerCount();
             })
             .catch(error => {
-                voiceError(
-                    'المتصفح منع تشغيل الصوت:',
-                    peerId,
+                console.error(
+                    '[Audio] Browser منع autoplay:',
                     error
                 );
 
                 showToast(
-                    'تم الاتصال لكن المتصفح منع تشغيل الصوت. اضغط مرة داخل الصفحة ثم أعد المحاولة.',
+                    'تم الاتصال بالمشارك لكن المتصفح منع تشغيل الصوت. اضغط داخل الصفحة ثم أعد المحاولة.',
                     'error'
                 );
 
                 /*
-                 * محاولة إضافية عند أول Gesture.
+                 * محاولة ثانية بعد تفاعل المستخدم.
                  */
-                const retry = () => {
-                    audio.play()
-                        .catch(() => {});
-
-                    window.removeEventListener(
-                        'click',
-                        retry
-                    );
-
-                    window.removeEventListener(
-                        'touchstart',
-                        retry
-                    );
-                };
-
-                window.addEventListener(
+                document.addEventListener(
                     'click',
-                    retry,
-                    {
-                        once: true
-                    }
-                );
-
-                window.addEventListener(
-                    'touchstart',
-                    retry,
+                    () => {
+                        audio.play()
+                            .catch(() => {});
+                    },
                     {
                         once: true
                     }
@@ -2221,863 +1936,255 @@ function attachRemoteAudio(
             });
     }
 
-    updatePeerListUI();
+    addPeerToUI(
+        peerId,
+        displayName
+    );
+
+    updatePeerCount();
 }
 
 
 /* =========================================================
-   إزالة Call
-========================================================= */
+   واجهة المشاركين
+   ========================================================= */
 
-function removePeerCall(
-    peerId
+function addPeerToUI(
+    peerId,
+    displayName
 ) {
-    const item =
-        activeCalls.get(
-            peerId
-        );
+    const list =
+        $('peers-list');
 
-    if (item) {
-        try {
-            item.call.close();
-        } catch (_) {}
+    if (!list) {
+        return;
     }
 
-    activeCalls.delete(
-        peerId
-    );
+    const id =
+        `participant-${peerId}`;
 
+    if (
+        document.getElementById(id)
+    ) {
+        return;
+    }
+
+    const div =
+        document.createElement('div');
+
+    div.id = id;
+
+    div.className =
+        'flex items-center gap-2 bg-gray-50 dark:bg-gray-800 p-2 rounded-lg';
+
+    const safeName =
+        String(
+            displayName || peerId
+        ).slice(0, 12);
+
+    div.innerHTML = `
+        <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+
+        <span>
+            ${escapeHtml(safeName)}...
+        </span>
+    `;
+
+    list.appendChild(div);
+}
+
+function removePeerCall(peerId) {
     const audio =
         document.getElementById(
             `audio-${peerId}`
         );
 
     if (audio) {
+        try {
+            audio.pause();
+        } catch (error) {}
+
         audio.srcObject = null;
         audio.remove();
     }
 
-    updatePeerListUI();
-}
-
-
-/* =========================================================
-   قائمة المشاركين
-========================================================= */
-
-function updatePeerListUI() {
-    const list =
+    const participant =
         document.getElementById(
-            'peers-list'
+            `participant-${peerId}`
         );
 
-    if (!list) {
-        return;
+    if (participant) {
+        participant.remove();
     }
 
-    list.innerHTML = '';
+    activeCalls.delete(
+        peerId
+    );
+
+    updatePeerCount();
+}
+
+function updatePeerCount() {
+    const count =
+        $('peers-list')?.children.length ||
+        activeCalls.size;
 
     /*
-     * أنا
+     * لا يوجد peer-count في index الحالي،
+     * لذلك نحدثه فقط لو كان موجوداً.
      */
-    if (isInRoom) {
-        const me =
-            document.createElement(
-                'div'
-            );
+    const countElement =
+        $('peer-count');
 
-        me.className =
-            'flex items-center justify-between bg-orange-50 dark:bg-gray-800 p-2 rounded-lg';
-
-        me.innerHTML = `
-            <div class="flex items-center gap-2">
-                <div class="w-2 h-2 bg-accent rounded-full"></div>
-                <span>أنت</span>
-            </div>
-
-            <span class="text-xs text-gray-400">
-                ${isMuted ? 'مكتوم' : 'متحدث'}
-            </span>
-        `;
-
-        list.appendChild(
-            me
-        );
+    if (countElement) {
+        countElement.textContent =
+            `الأشخاص: ${count}`;
     }
-
-    const rendered =
-        new Set();
-
-    activeCalls.forEach(
-        (item, peerId) => {
-            rendered.add(
-                peerId
-            );
-
-            const div =
-                document.createElement(
-                    'div'
-                );
-
-            div.className =
-                'flex items-center justify-between bg-gray-50 dark:bg-gray-800 p-2 rounded-lg';
-
-            div.innerHTML = `
-                <div class="flex items-center gap-2">
-                    <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <span>
-                        ${escapeHtml(
-                            item.displayName ||
-                            peerId.slice(0, 8)
-                        )}
-                    </span>
-                </div>
-
-                <span class="text-xs text-green-500">
-                    متصل
-                </span>
-            `;
-
-            list.appendChild(
-                div
-            );
-        }
-    );
-
-    /*
-     * Participants discovered لكن لم يكتمل اتصال WebRTC بعد.
-     */
-    knownRoomPeers.forEach(
-        (item, peerId) => {
-            if (
-                rendered.has(peerId)
-            ) {
-                return;
-            }
-
-            if (
-                Date.now() -
-                item.lastSeen >
-                45000
-            ) {
-                return;
-            }
-
-            const div =
-                document.createElement(
-                    'div'
-                );
-
-            div.className =
-                'flex items-center justify-between bg-gray-50 dark:bg-gray-800 p-2 rounded-lg';
-
-            div.innerHTML = `
-                <div class="flex items-center gap-2">
-                    <div class="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-                    <span>
-                        ${escapeHtml(
-                            item.npub ||
-                            peerId.slice(0, 8)
-                        )}
-                    </span>
-                </div>
-
-                <span class="text-xs text-yellow-500">
-                    جاري الاتصال
-                </span>
-            `;
-
-            list.appendChild(
-                div
-            );
-        }
-    );
 }
 
 
 /* =========================================================
-   Mute
-========================================================= */
+   كتم الميكروفون
+   ========================================================= */
 
 function toggleMute() {
     if (!localStream) {
         showToast(
-            'لا يوجد ميكروفون نشط.',
+            'لا يوجد ميكروفون نشط',
             'error'
         );
-
         return;
     }
 
-    isMuted =
-        !isMuted;
+    const tracks =
+        localStream.getAudioTracks();
 
-    localStream
-        .getAudioTracks()
-        .forEach(
-            track => {
-                track.enabled =
-                    !isMuted;
-            }
+    if (!tracks.length) {
+        showToast(
+            'لم يتم العثور على مسار صوتي',
+            'error'
         );
+        return;
+    }
 
-    updateMuteUI();
+    isMuted = !isMuted;
 
-    updatePeerListUI();
+    tracks.forEach(
+        track => {
+            track.enabled =
+                !isMuted;
+        }
+    );
+
+    const btn =
+        $('btn-mute');
+
+    if (!btn) {
+        return;
+    }
+
+    btn.innerHTML = isMuted
+        ? '<i class="fas fa-microphone-slash text-red-500"></i>'
+        : '<i class="fas fa-microphone"></i>';
+
+    btn.classList.toggle(
+        'bg-red-100',
+        isMuted
+    );
+
+    btn.classList.toggle(
+        'text-red-500',
+        isMuted
+    );
 
     showToast(
         isMuted
             ? 'تم كتم الميكروفون'
             : 'تم تشغيل الميكروفون',
-        'info'
+        'success'
     );
-}
-
-
-function updateMuteUI() {
-    const button =
-        document.getElementById(
-            'btn-mute'
-        );
-
-    if (!button) {
-        return;
-    }
-
-    if (isMuted) {
-        button.innerHTML =
-            '<i class="fas fa-microphone-slash text-red-500"></i>';
-
-        button.classList.add(
-            'bg-red-100',
-            'text-red-500'
-        );
-
-    } else {
-        button.innerHTML =
-            '<i class="fas fa-microphone"></i>';
-
-        button.classList.remove(
-            'bg-red-100',
-            'text-red-500'
-        );
-    }
 }
 
 
 /* =========================================================
-   Heartbeat للـPresence
-========================================================= */
-
-function startPresenceHeartbeat() {
-    stopPresenceHeartbeat();
-
-    presenceTimer =
-        setInterval(
-            () => {
-
-                if (!isInRoom) {
-                    return;
-                }
-
-                announcePresence();
-
-                cleanupStaleRoomPeers();
-
-                /*
-                 * تحديث إعلان الغرفة.
-                 */
-                publishRoomActivity()
-                    .catch(() => {});
-
-            },
-            15000
-        );
-}
-
-
-function stopPresenceHeartbeat() {
-    if (presenceTimer) {
-        clearInterval(
-            presenceTimer
-        );
-
-        presenceTimer = null;
-    }
-}
-
-
-function cleanupStaleRoomPeers() {
-    const now =
-        Date.now();
-
-    knownRoomPeers.forEach(
-        (item, peerId) => {
-            if (
-                now -
-                item.lastSeen >
-                45000
-            ) {
-                knownRoomPeers.delete(
-                    peerId
-                );
-
-                /*
-                 * لو الاتصال نفسه انتهى،
-                 * نحذفه.
-                 */
-                if (
-                    activeCalls.has(
-                        peerId
-                    )
-                ) {
-                    removePeerCall(
-                        peerId
-                    );
-                }
-            }
-        }
-    );
-
-    updatePeerListUI();
-}
-
-
-/* =========================================================
-   إعلان الغرفة - NIP-53 style
-========================================================= */
-
-async function publishRoomActivity(
-    status = 'live'
-) {
-    if (
-        !currentRoom
-    ) {
-        return;
-    }
-
-    const now =
-        Math.floor(
-            Date.now() / 1000
-        );
-
-    const eventTemplate = {
-        /*
-         * NIP-53 Live Activity.
-         */
-        kind: 30311,
-
-        created_at: now,
-
-        tags: [
-            [
-                'd',
-                currentRoom
-            ],
-
-            [
-                'title',
-                getRoomDisplayName(
-                    currentRoom
-                )
-            ],
-
-            [
-                'summary',
-                'غرفة صوتية مباشرة على Pulse'
-            ],
-
-            [
-                'status',
-                status
-            ],
-
-            [
-                'starts',
-                String(now)
-            ],
-
-            [
-                'current_participants',
-                String(
-                    activeCalls.size + 1
-                )
-            ],
-
-            [
-                't',
-                ROOM_TAG
-            ],
-
-            [
-                't',
-                currentRoom
-            ],
-
-            [
-                'relays',
-                ...RELAYS
-            ],
-
-            [
-                'p',
-                pk,
-                '',
-                'Participant'
-            ]
-        ],
-
-        content: ''
-    };
-
-    try {
-        await publishEvent(
-            eventTemplate
-        );
-
-        voiceLog(
-            'تم تحديث إعلان الغرفة:',
-            currentRoom,
-            status
-        );
-
-    } catch (error) {
-        voiceError(
-            'Room Activity publish error:',
-            error
-        );
-    }
-}
-
-
-/* =========================================================
-   اكتشاف الغرف المتاحة
-========================================================= */
-
-function startRoomDiscovery() {
-    if (roomListSub) {
-        try {
-            roomListSub.close();
-        } catch (_) {}
-    }
-
-    roomListSub =
-        pool.subscribeMany(
-            RELAYS,
-
-            [
-                {
-                    kinds: [30311],
-
-                    '#t': [ROOM_TAG],
-
-                    limit: 100
-                }
-            ],
-
-            {
-                onevent(event) {
-                    handleRoomActivity(
-                        event
-                    );
-                },
-
-                oneose() {
-                    cleanupRoomList();
-                }
-            }
-        );
-}
-
-
-/*
- * نخزن آخر إعلان لكل:
- *
- * room + pubkey
- *
- * لأن كل مستخدم يملك addressable event مستقل.
- */
-const availableRooms =
-    new Map();
-
-
-function handleRoomActivity(
-    event
-) {
-    const room =
-        getTag(
-            event,
-            'd'
-        );
-
-    if (!room) {
-        return;
-    }
-
-    const title =
-        getTag(
-            event,
-            'title'
-        ) ||
-        getRoomDisplayName(
-            room
-        );
-
-    const status =
-        getTag(
-            event,
-            'status'
-        );
-
-    const participants =
-        Number(
-            getTag(
-                event,
-                'current_participants'
-            ) || 1
-        );
-
-    /*
-     * إذا كان الإعلان قديم جداً،
-     * لا نعتبره غرفة حية.
-     */
-    const age =
-        Math.floor(
-            Date.now() / 1000
-        ) -
-        event.created_at;
-
-    if (
-        age >
-        90
-    ) {
-        return;
-    }
-
-    if (
-        status !== 'live'
-    ) {
-        return;
-    }
-
-    const key =
-        `${room}:${event.pubkey}`;
-
-    availableRooms.set(
-        key,
-        {
-            room,
-            title,
-            participants,
-            pubkey:
-                event.pubkey,
-            createdAt:
-                event.created_at
-        }
-    );
-
-    renderAvailableRooms();
-}
-
-
-function cleanupRoomList() {
-    const now =
-        Math.floor(
-            Date.now() / 1000
-        );
-
-    availableRooms.forEach(
-        (room, key) => {
-
-            if (
-                now -
-                room.createdAt >
-                90
-            ) {
-                availableRooms.delete(
-                    key
-                );
-            }
-        }
-    );
-
-    renderAvailableRooms();
-}
-
-
-function renderAvailableRooms() {
-    const container =
-        document.getElementById(
-            'available-rooms'
-        );
-
-    if (!container) {
-        return;
-    }
-
-    const now =
-        Math.floor(
-            Date.now() / 1000
-        );
-
-    const grouped =
-        new Map();
-
-    availableRooms.forEach(
-        item => {
-
-            if (
-                now -
-                item.createdAt >
-                90
-            ) {
-                return;
-            }
-
-            if (
-                !grouped.has(
-                    item.room
-                )
-            ) {
-                grouped.set(
-                    item.room,
-                    {
-                        room:
-                            item.room,
-                        title:
-                            item.title,
-                        participants:
-                            0,
-                        hosts: 0
-                    }
-                );
-            }
-
-            const room =
-                grouped.get(
-                    item.room
-                );
-
-            room.participants +=
-                Math.max(
-                    1,
-                    item.participants
-                );
-
-            room.hosts += 1;
-        }
-    );
-
-    if (!grouped.size) {
-        container.innerHTML = `
-            <div class="text-center py-5 text-gray-400 text-sm">
-                لا توجد غرف نشطة الآن.
-                <br>
-                كن أول من يبدأ غرفة 🎙️
-            </div>
-        `;
-
-        return;
-    }
-
-    container.innerHTML = '';
-
-    Array.from(
-        grouped.values()
-    )
-        .sort(
-            (a, b) =>
-                b.participants -
-                a.participants
-        )
-        .forEach(
-            room => {
-
-                const item =
-                    document.createElement(
-                        'button'
-                    );
-
-                item.type =
-                    'button';
-
-                item.className =
-                    'w-full text-right bg-white dark:bg-surface rounded-2xl p-4 border border-gray-100 dark:border-gray-800 shadow-sm hover:shadow-md transition active:scale-[0.99]';
-
-                item.onclick =
-                    () => {
-                        const input =
-                            document.getElementById(
-                                'room-input'
-                            );
-
-                        if (input) {
-                            input.value =
-                                room.room;
-                        }
-
-                        switchView(
-                            'rooms'
-                        );
-
-                        joinRoom(
-                            room.room
-                        );
-                    };
-
-                item.innerHTML = `
-                    <div class="flex items-center justify-between">
-
-                        <div class="flex items-center gap-3">
-
-                            <div class="w-11 h-11 rounded-full bg-accent/10 flex items-center justify-center">
-                                <i class="fas fa-microphone-lines text-accent"></i>
-                            </div>
-
-                            <div>
-                                <div class="font-black dark:text-white">
-                                    ${escapeHtml(
-                                        room.title
-                                    )}
-                                </div>
-
-                                <div class="text-xs text-gray-400 mt-1">
-                                    ${room.participants}
-                                    ${room.participants === 1 ? 'شخص' : 'أشخاص'}
-                                    متصلون
-                                </div>
-                            </div>
-
-                        </div>
-
-                        <span class="text-xs font-bold text-green-500">
-                            مباشر
-                        </span>
-
-                    </div>
-                `;
-
-                container.appendChild(
-                    item
-                );
-            }
-        );
-}
-
-
-/* =========================================================
-   مغادرة الغرفة
-========================================================= */
-
-async function leaveRoom(
-    intentional = true
-) {
-    if (
-        !isInRoom &&
-        !peer &&
-        !localStream
-    ) {
-        return;
-    }
-
-    voiceLog(
-        'مغادرة الغرفة:',
+   تنظيف الغرفة
+   ========================================================= */
+
+async function leaveRoom() {
+    console.log(
+        '[Room] مغادرة الغرفة:',
         currentRoom
     );
 
-    /*
-     * نوقف heartbeat أولاً.
-     */
-    stopPresenceHeartbeat();
+    const previousRoom =
+        currentRoom;
 
-    /*
-     * تحديث الإعلان إلى ended
-     * إذا أمكن.
-     */
-    if (
-        intentional &&
-        currentRoom
-    ) {
-        await publishRoomActivity(
-            'ended'
-        ).catch(() => {});
-    }
+    currentRoom = null;
 
-    await cleanupVoiceState(
-        intentional
+    localStorage.removeItem(
+        'active_room'
     );
 
-    if (intentional) {
-        showToast(
-            'تمت مغادرة الغرفة',
-            'info'
-        );
-    }
+    cleanupRoomResources(
+        true
+    );
+
+    updateRoomUI(
+        false
+    );
+
+    showToast(
+        previousRoom
+            ? 'تمت مغادرة الغرفة'
+            : 'تم الخروج',
+        'success'
+    );
 }
 
-
-/* =========================================================
-   تنظيف الصوت
-========================================================= */
-
-async function cleanupVoiceState(
-    clearSavedRoom
+function cleanupRoomResources(
+    destroyPeer = true
 ) {
-    isInRoom = false;
-
     /*
-     * إغلاق Nostr Presence.
+     * إغلاق Nostr room subscription.
      */
-    if (roomPresenceSub) {
+    if (roomSubscription) {
         try {
-            roomPresenceSub.close();
-        } catch (_) {}
+            roomSubscription.close();
+        } catch (error) {}
 
-        roomPresenceSub = null;
+        roomSubscription = null;
     }
 
+    announcedPeers.clear();
+
     /*
-     * إغلاق المكالمات.
+     * إغلاق كل المكالمات.
      */
     activeCalls.forEach(
-        item => {
+        call => {
             try {
-                item.call.close();
-            } catch (_) {}
+                call.close();
+            } catch (error) {}
         }
     );
 
     activeCalls.clear();
 
-    knownRoomPeers.clear();
-
     /*
-     * إزالة Audio elements.
+     * إزالة كل audio.
      */
     document
         .querySelectorAll(
-            'audio[data-pulse-remote="1"]'
+            '#audio-container audio, body > audio[id^="audio-"]'
         )
-        .forEach(
-            audio => {
-                audio.srcObject = null;
-                audio.remove();
-            }
-        );
+        .forEach(audio => {
+            try {
+                audio.pause();
+            } catch (error) {}
 
-    /*
-     * إزالة الصوت القديم المستخدم للـremote.
-     */
-    document
-        .querySelectorAll(
-            'audio[id^="audio-pulse-"]'
-        )
-        .forEach(
-            audio => {
-                audio.srcObject = null;
-                audio.remove();
-            }
-        );
+            audio.srcObject = null;
+            audio.remove();
+        });
 
     /*
      * إيقاف المايك.
@@ -3085,105 +2192,130 @@ async function cleanupVoiceState(
     if (localStream) {
         localStream
             .getTracks()
-            .forEach(
-                track => {
-                    track.stop();
-                }
-            );
+            .forEach(track => {
+                track.stop();
+            });
 
         localStream = null;
     }
 
     /*
-     * Peer.destroy مهم جداً.
+     * PeerJS.
      */
-    if (peer) {
+    if (
+        destroyPeer &&
+        peer
+    ) {
         try {
             peer.destroy();
-        } catch (_) {}
+        } catch (error) {
+            console.error(
+                '[WebRTC] فشل destroy:',
+                error
+            );
+        }
 
         peer = null;
+        myPeerId = null;
     }
 
-    currentPeerId = null;
-
     /*
-     * إيقاف Background Audio.
+     * AudioContext.
      */
-    stopBackgroundAudioEngine();
+    if (bgAudioContext) {
+        try {
+            bgAudioContext.close();
+        } catch (error) {}
 
-    /*
-     * Wake Lock.
-     */
+        bgAudioContext = null;
+    }
+
+    if (silentAudioElement) {
+        try {
+            silentAudioElement.pause();
+        } catch (error) {}
+
+        silentAudioElement.remove();
+
+        silentAudioElement = null;
+    }
+
     if (wakeLock) {
         try {
-            await wakeLock.release();
-        } catch (_) {}
+            wakeLock.release();
+        } catch (error) {}
 
         wakeLock = null;
     }
 
-    if (clearSavedRoom) {
-        localStorage.removeItem(
-            activeRoomStorageKey
-        );
+    isMuted = false;
 
-        localStorage.removeItem(
-            activeVoiceStorageKey
-        );
+    const list =
+        $('peers-list');
 
-        currentRoom = null;
+    if (list) {
+        list.innerHTML = '';
     }
 
-    updateRoomUI(false);
+    const muteButton =
+        $('btn-mute');
 
-    updatePeerListUI();
+    if (muteButton) {
+        muteButton.innerHTML =
+            '<i class="fas fa-microphone"></i>';
+
+        muteButton.classList.remove(
+            'bg-red-100',
+            'text-red-500'
+        );
+    }
 }
 
 
 /* =========================================================
-   Background Audio Engine
-   مأخوذ من فكرة المشروع القديم sm
-========================================================= */
+   Audio Keep Alive
+   ========================================================= */
 
-async function startBackgroundAudioEngine() {
+function startBackgroundAudioEngine() {
     try {
         if (
-            !backgroundAudioContext
+            !bgAudioContext
         ) {
-            backgroundAudioContext =
-                new (
-                    window.AudioContext ||
-                    window.webkitAudioContext
-                )();
-        }
+            const AudioContext =
+                window.AudioContext ||
+                window.webkitAudioContext;
 
-        if (
-            backgroundAudioContext.state ===
-            'suspended'
-        ) {
-            await backgroundAudioContext.resume();
-        }
+            if (!AudioContext) {
+                console.warn(
+                    '[Audio] AudioContext غير مدعوم'
+                );
 
-        if (
-            !silentAudioElement
-        ) {
-            const oscillator =
-                backgroundAudioContext
-                    .createOscillator();
+                return;
+            }
 
-            const gain =
-                backgroundAudioContext
-                    .createGain();
+            bgAudioContext =
+                new AudioContext();
 
-            const destination =
-                backgroundAudioContext
-                    .createMediaStreamDestination();
+            if (
+                bgAudioContext.state ===
+                'suspended'
+            ) {
+                bgAudioContext.resume()
+                    .catch(() => {});
+            }
 
             /*
-             * صوت شبه صامت.
-             * الهدف إبقاء Media Session نشطة في بعض المتصفحات.
+             * Oscillator شبه صامت.
+             *
+             * الهدف ليس تشغيل صوت مسموع،
+             * بل إبقاء AudioContext نشطاً قدر الإمكان.
              */
+            const oscillator =
+                bgAudioContext.createOscillator();
+
+            const gain =
+                bgAudioContext.createGain();
+
             gain.gain.value =
                 0.00001;
 
@@ -3192,21 +2324,16 @@ async function startBackgroundAudioEngine() {
             );
 
             gain.connect(
-                destination
+                bgAudioContext.destination
             );
 
             oscillator.start();
 
             silentAudioElement =
-                document.createElement(
-                    'audio'
-                );
+                document.createElement('audio');
 
             silentAudioElement.id =
-                'pulse-keep-alive';
-
-            silentAudioElement.srcObject =
-                destination.stream;
+                'voice-keepalive';
 
             silentAudioElement.autoplay =
                 true;
@@ -3214,156 +2341,27 @@ async function startBackgroundAudioEngine() {
             silentAudioElement.playsInline =
                 true;
 
-            silentAudioElement.volume =
-                0.01;
-
-            silentAudioElement.style.display =
-                'none';
+            silentAudioElement.muted =
+                true;
 
             document.body.appendChild(
                 silentAudioElement
             );
 
-            await silentAudioElement
-                .play()
-                .catch(
-                    error => {
-                        voiceError(
-                            'Background audio play blocked:',
-                            error
-                        );
-                    }
-                );
-        } else {
-            await silentAudioElement
-                .play()
+            silentAudioElement.play()
+                .catch(() => {});
+
+        } else if (
+            bgAudioContext.state ===
+            'suspended'
+        ) {
+            bgAudioContext.resume()
                 .catch(() => {});
         }
 
-        enableMediaSession();
-
     } catch (error) {
-        /*
-         * عدم نجاح هذا الجزء لا يمنع WebRTC.
-         */
-        voiceError(
-            'Background Audio Engine Error:',
-            error
-        );
-    }
-}
-
-
-function stopBackgroundAudioEngine() {
-    if (
-        silentAudioElement
-    ) {
-        try {
-            silentAudioElement.pause();
-        } catch (_) {}
-
-        silentAudioElement.srcObject =
-            null;
-
-        silentAudioElement.remove();
-
-        silentAudioElement =
-            null;
-    }
-
-    if (
-        backgroundAudioContext
-    ) {
-        try {
-            backgroundAudioContext.close();
-        } catch (_) {}
-
-        backgroundAudioContext =
-            null;
-    }
-}
-
-
-/* =========================================================
-   Media Session
-========================================================= */
-
-function enableMediaSession() {
-    if (
-        !('mediaSession' in navigator)
-    ) {
-        return;
-    }
-
-    try {
-        navigator.mediaSession.metadata =
-            new MediaMetadata({
-                title:
-                    currentRoom
-                        ? `Pulse - ${getRoomDisplayName(currentRoom)}`
-                        : 'Pulse Live Voice',
-
-                artist:
-                    'غرفة صوتية مباشرة',
-
-                album:
-                    'Pulse'
-            });
-
-        navigator.mediaSession.playbackState =
-            'playing';
-
-        try {
-            navigator.mediaSession.setActionHandler(
-                'play',
-                () => {
-                    if (
-                        backgroundAudioContext &&
-                        backgroundAudioContext.state ===
-                        'suspended'
-                    ) {
-                        backgroundAudioContext
-                            .resume();
-                    }
-
-                    if (
-                        silentAudioElement
-                    ) {
-                        silentAudioElement
-                            .play()
-                            .catch(() => {});
-                    }
-
-                    document
-                        .querySelectorAll(
-                            'audio[id^="audio-"]'
-                        )
-                        .forEach(
-                            audio => {
-                                audio
-                                    .play()
-                                    .catch(() => {});
-                            }
-                        );
-                }
-            );
-        } catch (_) {}
-
-        try {
-            navigator.mediaSession.setActionHandler(
-                'pause',
-                () => {
-                    /*
-                     * لا نفعل شيئاً.
-                     * لا نريد Media Session أن توقف الغرفة.
-                     */
-                }
-            );
-        } catch (_) {}
-
-    } catch (error) {
-        voiceError(
-            'MediaSession Error:',
+        console.error(
+            '[Audio] KeepAlive Error:',
             error
         );
     }
@@ -3372,44 +2370,25 @@ function enableMediaSession() {
 
 /* =========================================================
    Wake Lock
-========================================================= */
+   ========================================================= */
 
-async function requestWakeLock() {
-    if (
-        !('wakeLock' in navigator)
-    ) {
-        voiceLog(
-            'Wake Lock غير مدعوم.'
-        );
-
-        return;
-    }
-
+async function requestSystemLock() {
     try {
-        wakeLock =
-            await navigator.wakeLock.request(
-                'screen'
-            );
-
-        voiceLog(
-            'Wake Lock enabled.'
-        );
-
-        wakeLock.addEventListener(
-            'release',
-            () => {
-                voiceLog(
-                    'Wake Lock released.'
+        if (
+            'wakeLock' in navigator
+        ) {
+            wakeLock =
+                await navigator.wakeLock.request(
+                    'screen'
                 );
-            }
-        );
 
+            console.log(
+                '[Room] Wake Lock activated'
+            );
+        }
     } catch (error) {
-        /*
-         * اختياري، ولا يمنع الصوت.
-         */
-        voiceError(
-            'Wake Lock Error:',
+        console.warn(
+            '[Room] Wake Lock غير متاح:',
             error
         );
     }
@@ -3418,46 +2397,34 @@ async function requestWakeLock() {
 
 /* =========================================================
    Voice Activity Detection
-========================================================= */
+   ========================================================= */
 
-let vadTimer = null;
-
-function setupVoiceActivityDetection() {
-    if (
-        !localStream
-    ) {
+function setupVAD() {
+    if (!localStream) {
         return;
     }
 
     try {
-        if (!audioContext) {
-            audioContext =
-                new (
-                    window.AudioContext ||
-                    window.webkitAudioContext
-                )();
+        const AudioContext =
+            window.AudioContext ||
+            window.webkitAudioContext;
+
+        if (!AudioContext) {
+            return;
         }
 
-        if (
-            audioContext.state ===
-            'suspended'
-        ) {
-            audioContext.resume()
-                .catch(() => {});
-        }
+        const audioContext =
+            new AudioContext();
 
         const source =
-            audioContext
-                .createMediaStreamSource(
-                    localStream
-                );
+            audioContext.createMediaStreamSource(
+                localStream
+            );
 
         const analyser =
-            audioContext
-                .createAnalyser();
+            audioContext.createAnalyser();
 
-        analyser.fftSize =
-            256;
+        analyser.fftSize = 256;
 
         source.connect(
             analyser
@@ -3468,81 +2435,52 @@ function setupVoiceActivityDetection() {
                 analyser.frequencyBinCount
             );
 
-        if (vadTimer) {
-            clearInterval(
-                vadTimer
-            );
-        }
+        const interval =
+            setInterval(() => {
+                if (!currentRoom) {
+                    clearInterval(interval);
 
-        vadTimer =
-            setInterval(
-                () => {
+                    try {
+                        audioContext.close();
+                    } catch (error) {}
 
-                    if (!isInRoom) {
-                        clearInterval(
-                            vadTimer
-                        );
+                    return;
+                }
 
-                        vadTimer =
-                            null;
+                if (isMuted) {
+                    return;
+                }
 
-                        return;
-                    }
+                analyser.getByteFrequencyData(
+                    data
+                );
 
-                    if (isMuted) {
-                        return;
-                    }
+                const volume =
+                    data.reduce(
+                        (sum, value) =>
+                            sum + value,
+                        0
+                    ) / data.length;
 
-                    analyser.getByteFrequencyData(
-                        data
-                    );
+                /*
+                 * لا يوجد عنصر VAD في index الحالي،
+                 * لذلك نحدثه فقط لو موجود.
+                 */
+                const status =
+                    $('vad-status');
 
-                    let total = 0;
-
-                    for (
-                        let i = 0;
-                        i < data.length;
-                        i++
-                    ) {
-                        total +=
-                            data[i];
-                    }
-
-                    const volume =
-                        total /
-                        data.length;
-
-                    /*
-                     * يمكن لاحقاً ربط هذا
-                     * animation بالـUI.
-                     */
-                    if (
+                if (status) {
+                    status.textContent =
                         volume > 12
-                    ) {
-                        document
-                            .getElementById(
-                                'current-room-name'
-                            )
-                            ?.classList.add(
-                                'text-accent'
-                            );
-                    } else {
-                        document
-                            .getElementById(
-                                'current-room-name'
-                            )
-                            ?.classList.remove(
-                                'text-accent'
-                            );
-                    }
+                            ? 'الحالة: تتحدث الآن 🎙️'
+                            : 'الحالة: متصل (صامت)';
+                }
 
-                },
-                200
-            );
+            }, 200);
 
     } catch (error) {
-        voiceError(
-            'VAD Error:',
+        console.error(
+            '[VAD] Error:',
             error
         );
     }
@@ -3550,31 +2488,26 @@ function setupVoiceActivityDetection() {
 
 
 /* =========================================================
-   Refresh / Rejoin
-========================================================= */
+   إعادة الدخول بعد Refresh
+   ========================================================= */
 
-async function tryRestoreVoiceRoom() {
+async function restoreRoomAfterRefresh() {
     const savedRoom =
         localStorage.getItem(
-            activeRoomStorageKey
+            'active_room'
         );
 
-    const wasActive =
-        localStorage.getItem(
-            activeVoiceStorageKey
-        );
-
-    if (
-        !savedRoom ||
-        wasActive !== '1'
-    ) {
+    if (!savedRoom) {
         return;
     }
 
+    console.log(
+        '[Room] غرفة محفوظة بعد Refresh:',
+        savedRoom
+    );
+
     const input =
-        document.getElementById(
-            'room-input'
-        );
+        $('room-input');
 
     if (input) {
         input.value =
@@ -3582,69 +2515,60 @@ async function tryRestoreVoiceRoom() {
     }
 
     /*
-     * مهم:
-     * لا نستخدم toggleRoom() هنا.
+     * مهم جداً:
      *
-     * الكود القديم كان يضع currentRoom
-     * ثم يستدعي toggleRoom، فيفهم الحالة
-     * كأن المستخدم داخل الغرفة ويخرج منها.
+     * لا نضع currentRoom = savedRoom هنا.
+     *
+     * لأن joinRoom() يحتاج currentRoom === null
+     * ليعرف أننا لسنا داخل غرفة.
      */
-    setTimeout(
-        async () => {
+    currentRoom = null;
 
-            if (isInRoom) {
-                return;
-            }
+    /*
+     * ننتظر قليلاً حتى تكون هوية Nostr و PeerJS جاهزين.
+     */
+    await sleep(800);
 
-            voiceLog(
-                'محاولة استعادة الغرفة بعد Refresh:',
-                savedRoom
-            );
+    /*
+     * بسبب قيود المتصفح:
+     * getUserMedia بعد Refresh قد يحتاج تفاعل المستخدم.
+     *
+     * لذلك نحاول أولاً.
+     */
+    try {
+        await joinRoom(
+            safeRoomName(savedRoom)
+        );
 
-            try {
-                await joinRoom(
-                    savedRoom
-                );
+    } catch (error) {
+        console.error(
+            '[Room] فشل إعادة الدخول التلقائي:',
+            error
+        );
 
-            } catch (error) {
-                voiceError(
-                    'Auto Rejoin failed:',
-                    error
-                );
-
-                showToast(
-                    'احتفظنا بالغرفة السابقة، اضغط دخول لإعادة الاتصال.',
-                    'info'
-                );
-            }
-
-        },
-        1200
-    );
+        showToast(
+            'كانت لديك غرفة مفتوحة قبل التحديث. اضغط "دخول" لإعادة الاتصال.',
+            'info'
+        );
+    }
 }
 
 
 /* =========================================================
-   تغيير الـViews
-========================================================= */
+   التنقل
+   ========================================================= */
 
 function switchView(viewName) {
     document
-        .querySelectorAll(
-            '.view-section'
-        )
-        .forEach(
-            section => {
-                section.classList.add(
-                    'hidden'
-                );
-            }
-        );
+        .querySelectorAll('.view-section')
+        .forEach(section => {
+            section.classList.add(
+                'hidden'
+            );
+        });
 
     const target =
-        document.getElementById(
-            `view-${viewName}`
-        );
+        $(`view-${viewName}`);
 
     if (target) {
         target.classList.remove(
@@ -3653,54 +2577,43 @@ function switchView(viewName) {
     }
 
     document
-        .querySelectorAll(
-            '.nav-btn'
-        )
-        .forEach(
-            button => {
-                button.classList.remove(
-                    'text-accent',
-                    'active'
-                );
+        .querySelectorAll('.nav-btn')
+        .forEach(button => {
+            button.classList.remove(
+                'text-accent',
+                'active'
+            );
 
-                button.classList.add(
-                    'text-gray-400'
-                );
-            }
-        );
+            button.classList.add(
+                'text-gray-400'
+            );
+        });
 
-    const activeButton =
-        document.getElementById(
-            `nav-${viewName}`
-        );
+    const active =
+        $(`nav-${viewName}`);
 
-    if (activeButton) {
-        activeButton.classList.add(
+    if (active) {
+        active.classList.add(
             'text-accent',
             'active'
         );
 
-        activeButton.classList.remove(
+        active.classList.remove(
             'text-gray-400'
         );
     }
 }
 
-
-/* =========================================================
-   Theme
-========================================================= */
-
 function toggleTheme() {
-    document.documentElement
-        .classList.toggle(
-            'dark'
-        );
+    document.documentElement.classList.toggle(
+        'dark'
+    );
 
     localStorage.setItem(
         'theme',
-        document.documentElement
-            .classList.contains('dark')
+        document.documentElement.classList.contains(
+            'dark'
+        )
             ? 'dark'
             : 'light'
     );
@@ -3708,84 +2621,115 @@ function toggleTheme() {
 
 
 /* =========================================================
-   تنظيف عند إغلاق الصفحة
-========================================================= */
+   فحص WebRTC
+   ========================================================= */
 
-window.addEventListener(
-    'beforeunload',
-    () => {
+function runWebRTCDiagnostics() {
+    console.log(
+        '================ WebRTC Diagnostics ================'
+    );
 
-        /*
-         * لا نحذف activeRoom من localStorage.
-         *
-         * السبب:
-         * Refresh ≠ Leave.
-         *
-         * نريد أن يعرف التطبيق أن المستخدم
-         * كان داخل غرفة حتى يعيد الاتصال.
-         */
+    console.log(
+        '[WebRTC] HTTPS:',
+        location.protocol === 'https:'
+    );
 
-        stopPresenceHeartbeat();
+    console.log(
+        '[WebRTC] getUserMedia:',
+        !!navigator.mediaDevices?.getUserMedia
+    );
 
-        if (
-            roomPresenceSub
-        ) {
-            try {
-                roomPresenceSub.close();
-            } catch (_) {}
-        }
+    console.log(
+        '[WebRTC] RTCPeerConnection:',
+        !!window.RTCPeerConnection
+    );
 
-        /*
-         * لا نستطيع الاعتماد على async هنا.
-         * نترك PeerJS والمتصفح يغلقان الاتصال.
-         */
-    }
-);
+    console.log(
+        '[WebRTC] PeerJS:',
+        typeof Peer !== 'undefined'
+    );
+
+    console.log(
+        '[WebRTC] Current Room:',
+        currentRoom
+    );
+
+    console.log(
+        '[WebRTC] Peer ID:',
+        myPeerId
+    );
+
+    console.log(
+        '===================================================='
+    );
+}
 
 
 /* =========================================================
-   إعادة Wake Lock عند العودة للصفحة
-========================================================= */
+   Boot
+   ========================================================= */
 
 document.addEventListener(
-    'visibilitychange',
+    'DOMContentLoaded',
     async () => {
 
+        console.log(
+            '[Pulse] بدء تشغيل التطبيق'
+        );
+
+        /*
+         * Theme
+         */
         if (
-            document.visibilityState ===
-            'visible' &&
-            isInRoom
+            localStorage.getItem('theme') ===
+            'dark' ||
+            (
+                !localStorage.getItem('theme') &&
+                window.matchMedia(
+                    '(prefers-color-scheme: dark)'
+                ).matches
+            )
         ) {
-            if (
-                backgroundAudioContext &&
-                backgroundAudioContext.state ===
-                'suspended'
-            ) {
-                backgroundAudioContext
-                    .resume()
-                    .catch(() => {});
-            }
+            document.documentElement.classList.add(
+                'dark'
+            );
+        }
 
-            document
-                .querySelectorAll(
-                    'audio[id^="audio-"]'
-                )
-                .forEach(
-                    audio => {
-                        audio
-                            .play()
-                            .catch(() => {});
-                    }
-                );
+        /*
+         * الهوية
+         */
+        initIdentity();
 
-            if (!wakeLock) {
-                await requestWakeLock();
-            }
+        /*
+         * المنشورات
+         */
+        startFeed();
 
-            /*
-             * إعادة إعلان وجودنا.
-             */
-            announcePresence();
+        /*
+         * PeerJS يتم إنشاؤه عند الحاجة
+         * وليس بمجرد فتح الصفحة.
+         */
+
+        runWebRTCDiagnostics();
+
+        /*
+         * استعادة الغرفة بعد Refresh.
+         *
+         * لاحظ أننا لا ننفذ toggleRoom()
+         * مباشرة.
+         */
+        const savedRoom =
+            localStorage.getItem(
+                'active_room'
+            );
+
+        if (savedRoom) {
+            setTimeout(
+                () => {
+                    restoreRoomAfterRefresh();
+                },
+                1200
+            );
         }
     }
 );
@@ -3793,7 +2737,7 @@ document.addEventListener(
 
 /* =========================================================
    Service Worker
-========================================================= */
+   ========================================================= */
 
 if (
     'serviceWorker' in navigator
@@ -3803,136 +2747,34 @@ if (
         () => {
             navigator.serviceWorker
                 .register('./sw.js')
-                .then(
-                    () => {
-                        log(
-                            'Service Worker Registered.'
-                        );
-                    }
-                )
-                .catch(
-                    error => {
-                        console.error(
-                            'SW Registration Error:',
-                            error
-                        );
-                    }
-                );
+                .then(() => {
+                    console.log(
+                        '[SW] Service Worker Registered'
+                    );
+                })
+                .catch(error => {
+                    console.warn(
+                        '[SW] Service Worker Failed:',
+                        error
+                    );
+                });
         }
     );
 }
 
 
 /* =========================================================
-   Boot
-========================================================= */
+   جعل الدوال متاحة لأزرار HTML
+   ========================================================= */
 
-document.addEventListener(
-    'DOMContentLoaded',
-    async () => {
+window.publishPost = publishPost;
+window.likePost = likePost;
+window.replyToPost = replyToPost;
 
-        log(
-            'Pulse booting...'
-        );
+window.toggleRoom = toggleRoom;
+window.toggleMute = toggleMute;
 
-        /*
-         * Theme.
-         */
-        if (
-            localStorage.getItem(
-                'theme'
-            ) === 'dark' ||
+window.switchView = switchView;
+window.toggleTheme = toggleTheme;
 
-            (
-                !localStorage.getItem(
-                    'theme'
-                ) &&
-                window.matchMedia(
-                    '(prefers-color-scheme: dark)'
-                ).matches
-            )
-        ) {
-            document.documentElement
-                .classList.add(
-                    'dark'
-                );
-        }
-
-        /*
-         * Nostr identity.
-         */
-        try {
-            initIdentity();
-            initNostr();
-
-        } catch (error) {
-            console.error(
-                'Boot identity error:',
-                error
-            );
-
-            return;
-        }
-
-        /*
-         * Feed.
-         */
-        startFeed();
-
-        /*
-         * Discover rooms.
-         */
-        startRoomDiscovery();
-
-        /*
-         * تنظيف قائمة الغرف دورياً.
-         */
-        setInterval(
-            cleanupRoomList,
-            30000
-        );
-
-        /*
-         * إصلاح مشكلة Refresh:
-         * نعيد الاتصال بالغرفة السابقة بدلاً من
-         * استدعاء toggleRoom بشكل خاطئ.
-         */
-        await tryRestoreVoiceRoom();
-
-        log(
-            'Pulse boot completed.'
-        );
-    }
-);
-
-
-/* =========================================================
-   تصدير الدوال المطلوبة من HTML
-========================================================= */
-
-window.publishPost =
-    publishPost;
-
-window.likePost =
-    likePost;
-
-window.replyToPost =
-    replyToPost;
-
-window.toggleRoom =
-    toggleRoom;
-
-window.joinRoom =
-    joinRoom;
-
-window.leaveRoom =
-    leaveRoom;
-
-window.toggleMute =
-    toggleMute;
-
-window.switchView =
-    switchView;
-
-window.toggleTheme =
-    toggleTheme;
+window.showToast = showToast;
