@@ -1,4 +1,4 @@
-// Pulse — Decentralized Engine v1.0 (GitHub Pages Optimized)
+// Pulse — Decentralized Engine v2.0 (Fixed Publishing & Rooms)
 const RELAYS = ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'];
 const APP_TAG = 'pulse-platform';
 
@@ -7,17 +7,22 @@ let skBytes, pk, npub;
 const storageKey = 'pulse_nsec_hex';
 
 function initIdentity() {
-    let hexSk = localStorage.getItem(storageKey);
-    if (!hexSk) {
-        const newSk = NostrTools.generateSecretKey();
-        hexSk = NostrTools.utils.bytesToHex(newSk);
-        localStorage.setItem(storageKey, hexSk);
+    try {
+        let hexSk = localStorage.getItem(storageKey);
+        if (!hexSk) {
+            const newSk = NostrTools.generateSecretKey();
+            hexSk = NostrTools.utils.bytesToHex(newSk);
+            localStorage.setItem(storageKey, hexSk);
+        }
+        skBytes = NostrTools.utils.hexToBytes(hexSk);
+        pk = NostrTools.getPublicKey(skBytes);
+        npub = NostrTools.nip19.npubEncode(pk);
+        
+        document.getElementById('npub-display').textContent = npub.slice(0, 8) + '...' + npub.slice(-6);
+    } catch (err) {
+        console.error("Identity Error:", err);
+        showToast('فشل تهيئة الهوية', 'error');
     }
-    skBytes = NostrTools.utils.hexToBytes(hexSk);
-    pk = NostrTools.getPublicKey(skBytes);
-    npub = NostrTools.nip19.npubEncode(pk);
-    
-    document.getElementById('npub-display').textContent = npub.slice(0, 8) + '...' + npub.slice(-6);
 }
 
 // ── 2. Nostr Pool & Feed ──
@@ -48,7 +53,7 @@ function renderPost(event) {
     const time = new Date(event.created_at * 1000).toLocaleTimeString('ar-EG', {hour: '2-digit', minute:'2-digit'});
     
     const div = document.createElement('div');
-    div.className = 'bg-white dark:bg-surface rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-800 fade-in';
+    div.className = 'post-card bg-white dark:bg-surface rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-800 fade-in';
     div.innerHTML = `
         <div class="flex justify-between items-start mb-3">
             <div class="flex items-center gap-3">
@@ -72,54 +77,76 @@ function renderPost(event) {
     container.prepend(div);
 }
 
-// ── 3. Actions (Publish, Like, Reply) ──
+// ── 3. Actions (Publish, Like, Reply) - FIXED ──
 async function publishPost() {
     const input = document.getElementById('post-input');
     const content = input.value.trim();
     if (!content) return;
 
-    const eventTemplate = {
-        kind: 1,
-        created_at: Math.floor(Date.now() / 1000),
-        tags: [['t', APP_TAG]],
-        content: content
-    };
-    
-    const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
-    await pool.publish(RELAYS, signedEvent);
-    
-    input.value = '';
-    showToast('تم النشر بنجاح على شبكة Nostr');
+    try {
+        const eventTemplate = {
+            kind: 1,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [['t', APP_TAG]],
+            content: content
+        };
+        
+        // التوقيع الصحيح باستخدام finalizeEvent
+        const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
+        
+        showToast('جاري النشر...', 'info');
+        const results = await pool.publish(RELAYS, signedEvent);
+        
+        // التحقق من نجاح النشر في Relay واحد على الأقل
+        const successCount = Object.values(results).filter(r => r).length;
+        if (successCount > 0) {
+            input.value = '';
+            showToast('تم النشر بنجاح على الشبكة', 'success');
+        } else {
+            showToast('فشل النشر: الخوادم لم تستجب', 'error');
+        }
+    } catch (err) {
+        console.error("Publish Error:", err);
+        showToast('فشل النشر: ' + err.message, 'error');
+    }
 }
 
 async function likePost(targetId, targetPubkey) {
-    const eventTemplate = {
-        kind: 7,
-        created_at: Math.floor(Date.now() / 1000),
-        tags: [['e', targetId], ['p', targetPubkey]],
-        content: '+'
-    };
-    const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
-    await pool.publish(RELAYS, signedEvent);
-    showToast('تم الإعجاب بالمنشور');
+    try {
+        const eventTemplate = {
+            kind: 7,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [['e', targetId], ['p', targetPubkey]],
+            content: '+'
+        };
+        const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
+        await pool.publish(RELAYS, signedEvent);
+        showToast('تم الإعجاب', 'success');
+    } catch (err) {
+        showToast('فشل الإعجاب', 'error');
+    }
 }
 
 async function replyToPost(targetId, targetPubkey) {
     const content = prompt('اكتب ردك:');
     if (!content) return;
     
-    const eventTemplate = {
-        kind: 1,
-        created_at: Math.floor(Date.now() / 1000),
-        tags: [['e', targetId, '', 'reply'], ['p', targetPubkey]],
-        content: content
-    };
-    const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
-    await pool.publish(RELAYS, signedEvent);
-    showToast('تم إرسال الرد');
+    try {
+        const eventTemplate = {
+            kind: 1,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [['e', targetId, '', 'reply'], ['p', targetPubkey]],
+            content: content
+        };
+        const signedEvent = NostrTools.finalizeEvent(eventTemplate, skBytes);
+        await pool.publish(RELAYS, signedEvent);
+        showToast('تم إرسال الرد', 'success');
+    } catch (err) {
+        showToast('فشل إرسال الرد', 'error');
+    }
 }
 
-// ── 4. Voice Rooms (WebRTC + Nostr Signaling) ──
+// ── 4. Voice Rooms (WebRTC + Nostr Signaling) - FIXED ──
 let localStream = null;
 let peer = null;
 let currentRoom = null;
@@ -134,33 +161,52 @@ async function toggleRoom() {
     if (!currentRoom) {
         currentRoom = input.value.trim() || 'general';
         try {
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // طلب إذن المايكروفون بشكل صريح
+            localStream = await navigator.mediaDevices.getUserMedia({ 
+                audio: { echoCancellation: true, noiseSuppression: true } 
+            });
         } catch (e) {
-            showToast('يرجى السماح باستخدام المايكروفون', 'error');
+            showToast('يرجى السماح باستخدام المايكروفون من إعدادات المتصفح', 'error');
             return;
         }
 
-        const myPeerId = npub.slice(0, 10).replace('npub1', 'p');
-        peer = new Peer(myPeerId);
-        
-        peer.on('open', () => {
-            announcePresence(myPeerId);
-            listenForPeers();
-        });
-
-        peer.on('call', (call) => {
-            call.answer(localStream);
-            call.on('stream', (remoteStream) => {
-                addPeerAudio(remoteStream, 'مستمع');
+        try {
+            // تهيئة PeerJS مع خادم عام موثوق
+            const myPeerId = 'pulse-' + npub.slice(4, 12);
+            peer = new Peer(myPeerId, {
+                host: '0.peerjs.com',
+                port: 443,
+                secure: true
             });
-        });
+            
+            peer.on('open', (id) => {
+                console.log('My Peer ID:', id);
+                announcePresence(id);
+                listenForPeers();
+            });
 
-        document.getElementById('current-room-name').textContent = `غرفة: ${currentRoom}`;
-        activeUi.classList.remove('hidden');
-        btn.textContent = 'مغادرة';
-        btn.classList.add('bg-red-500', 'text-white');
-        btn.classList.remove('bg-white', 'text-accent');
+            peer.on('error', (err) => {
+                console.error('PeerJS Error:', err);
+                showToast('فشل الاتصال بالغرفة الصوتية', 'error');
+            });
+
+            peer.on('call', (call) => {
+                call.answer(localStream);
+                call.on('stream', (remoteStream) => {
+                    addPeerAudio(remoteStream, 'مستمع');
+                });
+            });
+
+            document.getElementById('current-room-name').textContent = `غرفة: ${currentRoom}`;
+            activeUi.classList.remove('hidden');
+            btn.textContent = 'مغادرة';
+            btn.classList.add('bg-red-500', 'text-white');
+            btn.classList.remove('bg-white', 'text-accent');
+        } catch (err) {
+            showToast('فشل تهيئة الغرفة', 'error');
+        }
     } else {
+        // Leave Room
         if (roomSub) roomSub.close();
         if (peer) peer.destroy();
         if (localStream) localStream.getTracks().forEach(t => t.stop());
@@ -191,7 +237,7 @@ function listenForPeers() {
         [{ kinds: [1], '#room': [currentRoom], limit: 10 }],
         {
             onevent: (event) => {
-                if (event.pubkey === pk) return;
+                if (event.pubkey === pk) return; // تجاهل نفسي
                 try {
                     const data = JSON.parse(event.content);
                     if (data.peerId && !document.getElementById(`peer-${data.peerId}`)) {
@@ -255,11 +301,13 @@ function toggleTheme() {
 
 function showToast(msg, type = 'success') {
     const toast = document.getElementById('toast');
-    const icon = toast.querySelector('i');
+    const icon = document.getElementById('toast-icon');
     document.getElementById('toast-msg').textContent = msg;
     
     if (type === 'error') {
         icon.className = 'fas fa-exclamation-circle text-red-400';
+    } else if (type === 'info') {
+        icon.className = 'fas fa-info-circle text-blue-400';
     } else {
         icon.className = 'fas fa-check-circle text-green-400';
     }
@@ -283,15 +331,11 @@ document.addEventListener('DOMContentLoaded', () => {
     startFeed();
 });
 
-// ── 7. PWA Service Worker Registration (GitHub Pages Safe) ──
+// ── 7. PWA Service Worker Registration ──
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js')
-            .then(registration => {
-                console.log('✅ Service Worker registered with scope:', registration.scope);
-            })
-            .catch(error => {
-                console.log('❌ Service Worker registration failed:', error);
-            });
+            .then(registration => console.log('SW Registered'))
+            .catch(error => console.log('SW Failed:', error));
     });
 }
