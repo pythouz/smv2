@@ -14,7 +14,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- استخدام نسخة مستقرة من nostr-tools -->
     <script src="https://unpkg.com/nostr-tools@2.10.0/lib/nostr.bundle.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     
@@ -38,114 +37,22 @@
     <style>
         body { font-family: 'IBM Plex Sans Arabic', sans-serif; background-color: #F7F4EF; }
         .dark body { background-color: #0b0f19; color: #E5E5E5; }
-        
         .glass { background: rgba(247, 244, 239, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
         .dark .glass { background: rgba(11, 15, 25, 0.85); }
-        
         .avatar { display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: 900; color: white; flex-shrink: 0; }
         .hidden { display: none !important; }
         .fade-in { animation: fadeIn 0.3s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        
-        /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
         .dark ::-webkit-scrollbar-thumb { background: #334155; }
-
         .post-card { transition: all 0.2s ease; }
         .post-card:active { transform: scale(0.98); }
     </style>
 </head>
 <body class="transition-colors duration-300 min-h-screen">
 
-    <!-- Header -->
-    <header class="fixed top-0 w-full z-50 glass border-b border-gray-200/50 dark:border-gray-800/50">
-        <div class="max-w-2xl mx-auto px-4 py-3 flex justify-between items-center">
-            <h1 class="text-2xl font-black text-accent tracking-tight">Pulse</h1>
-            <div class="flex items-center gap-3">
-                <button onclick="toggleTheme()" class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition">
-                    <i class="fas fa-moon dark:hidden text-gray-600"></i>
-                    <i class="fas fa-sun hidden dark:block text-yellow-400"></i>
-                </button>
-                <div class="flex items-center gap-2 bg-gray-100 dark:bg-surface px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700">
-                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                    <span id="npub-display" class="text-xs font-mono text-gray-600 dark:text-gray-300">جاري...</span>
-                </div>
-            </div>
-        </div
-</think>
-
-أفهمك تماماً. المشكلة في النسخة السابقة كانت أن تبسيط الكود أثر على دقة التصميم (Elite UI)، وأن هناك تعارضاً بسيطاً في طريقة استدعاء مكتبة `nostr-tools` عبر الـ CDN يمنع توقيع المنشورات، بالإضافة إلى أن غرف WebRTC تحتاج إلى إعدادات أدق لتعمل بسلاسة.
-
-لقد قمت بإعادة كتابة الكود **ليطابق تصميم "Elite" الأصلي تماماً** (نفس الألوان `#F7F4EF` و `#FF4D00`، الخطوط، الظلال، والحواف)، مع **إصلاح جذري** لمشكلة نشر البوستات والغرف الصوتية بإضافة معالجة أخطاء (Error Handling) واضحة.
-
-إليك الملفات الثلاثة الأساسية محدثة ومضمونة 100%:
-
----
-
-### 1. ملف `index.html` (تصميم Elite الأصلي المطابق)
-```html
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#FF4D00">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <title>Pulse — منصة المجتمع الحي</title>
-    
-    <link rel="manifest" href="./manifest.json">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/nostr-tools@2.10.0/lib/nostr.bundle.js"></script>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontFamily: { sans: ['IBM Plex Sans Arabic', 'sans-serif'] },
-                    colors: { 
-                        accent: '#FF4D00', 
-                        dark: '#0F0F0F', 
-                        surface: '#1A1A1A',
-                        bgLight: '#F7F4EF',
-                        bgDark: '#0b0f19'
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        body { font-family: 'IBM Plex Sans Arabic', sans-serif; background-color: #F7F4EF; }
-        .dark body { background-color: #0b0f19; color: #E5E5E5; }
-        
-        .glass { background: rgba(247, 244, 239, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-        .dark .glass { background: rgba(11, 15, 25, 0.85); }
-        
-        .avatar { display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: 900; color: white; flex-shrink: 0; }
-        .hidden { display: none !important; }
-        .fade-in { animation: fadeIn 0.3s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-        .dark ::-webkit-scrollbar-thumb { background: #334155; }
-
-        .post-card { transition: all 0.2s ease; }
-        .post-card:active { transform: scale(0.98); }
-    </style>
-</head>
-<body class="transition-colors duration-300 min-h-screen">
-
-    <!-- Header -->
     <header class="fixed top-0 w-full z-50 glass border-b border-gray-200/50 dark:border-gray-800/50">
         <div class="max-w-2xl mx-auto px-4 py-3 flex justify-between items-center">
             <h1 class="text-2xl font-black text-accent tracking-tight">Pulse</h1>
@@ -162,14 +69,10 @@
         </div>
     </header>
 
-    <!-- Main Content -->
     <main class="max-w-2xl mx-auto pt-20 pb-24 px-4">
-        
-        <!-- View: Timeline -->
         <div id="view-timeline" class="view-section fade-in">
             <div class="bg-white dark:bg-surface rounded-2xl p-4 shadow-sm mb-6 border border-gray-100 dark:border-gray-800">
-                <textarea id="post-input" rows="3" placeholder="بماذا تفكر؟ شارك المجتمع..." 
-                    class="w-full bg-transparent border-none focus:ring-0 text-lg resize-none placeholder-gray-400 dark:text-white"></textarea>
+                <textarea id="post-input" rows="3" placeholder="بماذا تفكر؟ شارك المجتمع..." class="w-full bg-transparent border-none focus:ring-0 text-lg resize-none placeholder-gray-400 dark:text-white"></textarea>
                 <div class="flex justify-between items-center mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
                     <span class="text-xs text-gray-400">يتم النشر عبر شبكة Nostr اللامركزية</span>
                     <button onclick="publishPost()" class="bg-accent hover:bg-orange-600 text-white px-6 py-2 rounded-full font-bold transition transform active:scale-95 shadow-md shadow-orange-500/20">
@@ -177,7 +80,6 @@
                     </button>
                 </div>
             </div>
-            
             <div id="feed-container" class="space-y-4"></div>
             <div id="loading-feed" class="text-center py-8 text-gray-400">
                 <i class="fas fa-circle-notch fa-spin text-2xl text-accent"></i>
@@ -185,14 +87,12 @@
             </div>
         </div>
 
-        <!-- View: Voice Rooms -->
         <div id="view-rooms" class="view-section hidden fade-in">
             <div class="bg-gradient-to-br from-accent to-orange-600 rounded-2xl p-6 text-white shadow-lg mb-6">
                 <h2 class="text-2xl font-black mb-2">🎙️ غرف صوتية مباشرة</h2>
                 <p class="opacity-90 mb-4 text-sm">تواصل مع المجتمع صوتياً بشكل لامركزي وآمن (P2P WebRTC).</p>
                 <div class="flex gap-2">
-                    <input id="room-input" type="text" placeholder="اسم الغرفة (مثال: tech)" 
-                        class="flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500">
+                    <input id="room-input" type="text" placeholder="اسم الغرفة (مثال: tech)" class="flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500">
                     <button id="btn-join-room" onclick="toggleRoom()" class="bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md">
                         دخول
                     </button>
@@ -219,10 +119,8 @@
                 </div>
             </div>
         </div>
-
     </main>
 
-    <!-- Bottom Navigation -->
     <nav class="fixed bottom-0 w-full glass border-t border-gray-200 dark:border-gray-800 z-50 pb-safe">
         <div class="max-w-2xl mx-auto flex justify-around py-3">
             <button onclick="switchView('timeline')" id="nav-timeline" class="nav-btn active flex flex-col items-center gap-1 text-accent transition">
@@ -234,7 +132,6 @@
         </div>
     </nav>
 
-    <!-- Toast Notification -->
     <div id="toast" class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-dark text-white px-6 py-3 rounded-full shadow-xl z-[100] hidden transition-all duration-300 flex items-center gap-2 text-sm">
         <i id="toast-icon" class="fas fa-check-circle text-green-400"></i> <span id="toast-msg">تم بنجاح</span>
     </div>
