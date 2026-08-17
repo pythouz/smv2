@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
+
 <head>
+
     <meta charset="UTF-8">
 
     <meta
@@ -23,7 +25,9 @@
         content="default"
     >
 
-    <title>Pulse — منصة المجتمع الحي</title>
+    <title>
+        Pulse — منصة المجتمع الحي
+    </title>
 
     <link
         rel="manifest"
@@ -55,11 +59,15 @@
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
     <script>
+
         tailwind.config = {
+
             darkMode: 'class',
 
             theme: {
+
                 extend: {
+
                     fontFamily: {
                         sans: [
                             'IBM Plex Sans Arabic',
@@ -68,18 +76,26 @@
                     },
 
                     colors: {
+
                         accent: '#FF4D00',
+
                         dark: '#0F0F0F',
+
                         surface: '#1A1A1A',
+
                         bgLight: '#F7F4EF',
+
                         bgDark: '#0b0f19'
                     }
                 }
             }
         };
+
     </script>
 
+
     <style>
+
         body {
             font-family: 'IBM Plex Sans Arabic', sans-serif;
             background-color: #F7F4EF;
@@ -119,6 +135,7 @@
         }
 
         @keyframes fadeIn {
+
             from {
                 opacity: 0;
                 transform: translateY(8px);
@@ -128,6 +145,7 @@
                 opacity: 1;
                 transform: translateY(0);
             }
+
         }
 
         ::-webkit-scrollbar {
@@ -155,398 +173,484 @@
             transform: scale(0.98);
         }
 
-        .like-button.liked {
-            color: #ef4444 !important;
-        }
-
-        .like-button.liked i {
-            font-family: "Font Awesome 6 Free";
-            font-weight: 900;
-        }
-
-        .like-pop {
-            animation: likePop 0.25s ease-out;
-        }
-
-        @keyframes likePop {
-            0% {
-                transform: scale(1);
-            }
-
-            50% {
-                transform: scale(1.35);
-            }
-
-            100% {
-                transform: scale(1);
-            }
+        .like-btn {
+            transition:
+                color 0.15s ease,
+                transform 0.15s ease;
         }
 
         .room-card {
             transition:
-                transform 0.2s ease,
-                box-shadow 0.2s ease,
-                border-color 0.2s ease;
+                transform 0.15s ease,
+                box-shadow 0.15s ease;
         }
 
-        .room-card:hover {
-            transform: translateY(-2px);
+        .room-card:active {
+            transform: scale(0.98);
         }
+
+        audio {
+            display: none;
+        }
+
     </style>
+
 </head>
 
-<body class="transition-colors duration-300 min-h-screen">
 
-    <!-- Header -->
-    <header
-        class="fixed top-0 w-full z-50 glass border-b border-gray-200/50 dark:border-gray-800/50"
-    >
-        <div
-            class="max-w-2xl mx-auto px-4 py-3 flex justify-between items-center"
-        >
-            <h1 class="text-2xl font-black text-accent tracking-tight">
-                Pulse
-            </h1>
+<body
+    class="transition-colors duration-300 min-h-screen"
+>
 
-            <div class="flex items-center gap-3">
 
-                <button
-                    onclick="toggleTheme()"
-                    class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition"
-                >
-                    <i class="fas fa-moon dark:hidden text-gray-600"></i>
-                    <i class="fas fa-sun hidden dark:block text-yellow-400"></i>
-                </button>
+<!-- =====================================================
+     Header
+===================================================== -->
 
-                <div
-                    class="flex items-center gap-2 bg-gray-100 dark:bg-surface px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700"
-                >
-                    <div
-                        class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
-                    ></div>
+<header
+    class="fixed top-0 w-full z-50 glass border-b border-gray-200/50 dark:border-gray-800/50"
+>
 
-                    <span
-                        id="npub-display"
-                        class="text-xs font-mono text-gray-600 dark:text-gray-300"
-                    >
-                        جاري...
-                    </span>
-                </div>
-
-            </div>
-        </div>
-    </header>
-
-
-    <!-- Main -->
-    <main class="max-w-2xl mx-auto pt-20 pb-24 px-4">
-
-        <!-- ========================= -->
-        <!-- Timeline -->
-        <!-- ========================= -->
-
-        <div
-            id="view-timeline"
-            class="view-section fade-in"
-        >
-
-            <div
-                class="bg-white dark:bg-surface rounded-2xl p-4 shadow-sm mb-6 border border-gray-100 dark:border-gray-800"
-            >
-
-                <textarea
-                    id="post-input"
-                    rows="3"
-                    placeholder="بماذا تفكر؟ شارك المجتمع..."
-                    class="w-full bg-transparent border-none focus:ring-0 text-lg resize-none placeholder-gray-400 dark:text-white"
-                ></textarea>
-
-                <div
-                    class="flex justify-between items-center mt-3 pt-3 border-t border-gray-100 dark:border-gray-800"
-                >
-
-                    <span class="text-xs text-gray-400">
-                        يتم النشر عبر شبكة Nostr اللامركزية
-                    </span>
-
-                    <button
-                        onclick="publishPost()"
-                        class="bg-accent hover:bg-orange-600 text-white px-6 py-2 rounded-full font-bold transition transform active:scale-95 shadow-md shadow-orange-500/20"
-                    >
-                        نشر
-                        <i class="fas fa-paper-plane mr-1"></i>
-                    </button>
-
-                </div>
-            </div>
-
-
-            <div
-                id="feed-container"
-                class="space-y-4"
-            ></div>
-
-
-            <div
-                id="loading-feed"
-                class="text-center py-8 text-gray-400"
-            >
-                <i class="fas fa-circle-notch fa-spin text-2xl text-accent"></i>
-
-                <p class="mt-2 text-sm">
-                    جاري تحميل المنشورات من الشبكة...
-                </p>
-            </div>
-
-        </div>
-
-
-        <!-- ========================= -->
-        <!-- Voice Rooms -->
-        <!-- ========================= -->
-
-        <div
-            id="view-rooms"
-            class="view-section hidden fade-in"
-        >
-
-            <!-- Create Room -->
-            <div
-                class="bg-gradient-to-br from-accent to-orange-600 rounded-2xl p-6 text-white shadow-lg mb-6"
-            >
-
-                <h2 class="text-2xl font-black mb-2">
-                    🎙️ غرف صوتية مباشرة
-                </h2>
-
-                <p class="opacity-90 mb-4 text-sm">
-                    اختر غرفة موجودة أو أنشئ غرفة جديدة وتحدث مع المجتمع صوتياً.
-                </p>
-
-                <div class="flex gap-2">
-
-                    <input
-                        id="room-input"
-                        type="text"
-                        maxlength="50"
-                        placeholder="اسم غرفة جديدة..."
-                        class="flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500"
-                    >
-
-                    <button
-                        id="btn-join-room"
-                        onclick="createAndJoinRoom()"
-                        class="bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md whitespace-nowrap"
-                    >
-                        إنشاء
-                    </button>
-
-                </div>
-
-            </div>
-
-
-            <!-- Live Rooms Directory -->
-            <div
-                class="bg-white dark:bg-surface rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-800 mb-6"
-            >
-
-                <div
-                    class="flex items-center justify-between mb-4"
-                >
-
-                    <div>
-                        <h3
-                            class="font-black text-lg dark:text-white"
-                        >
-                            الغرف المباشرة
-                        </h3>
-
-                        <p class="text-xs text-gray-400 mt-1">
-                            اختر الغرفة التي تريد الانضمام إليها
-                        </p>
-                    </div>
-
-                    <div
-                        id="rooms-live-indicator"
-                        class="flex items-center gap-2 text-xs text-green-500"
-                    >
-                        <span
-                            class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
-                        ></span>
-
-                        مباشر
-                    </div>
-
-                </div>
-
-
-                <div
-                    id="rooms-list"
-                    class="space-y-3"
-                >
-
-                    <div
-                        id="rooms-loading"
-                        class="text-center py-8 text-gray-400"
-                    >
-
-                        <i
-                            class="fas fa-circle-notch fa-spin text-accent text-xl"
-                        ></i>
-
-                        <p class="text-sm mt-2">
-                            جاري البحث عن الغرف...
-                        </p>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-
-            <!-- Active Room -->
-            <div
-                id="active-room-ui"
-                class="hidden bg-white dark:bg-surface rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-800 text-center"
-            >
-
-                <div
-                    class="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center mx-auto mb-4"
-                >
-                    <i
-                        class="fas fa-microphone text-3xl text-accent animate-pulse"
-                    ></i>
-                </div>
-
-                <h3
-                    id="current-room-name"
-                    class="text-xl font-bold mb-1 dark:text-white"
-                >
-                    اسم الغرفة
-                </h3>
-
-                <p
-                    id="room-connection-status"
-                    class="text-sm text-gray-400 mb-6"
-                >
-                    جاري الاتصال...
-                </p>
-
-
-                <div
-                    class="flex justify-center gap-4 mb-6"
-                >
-
-                    <button
-                        onclick="toggleMute()"
-                        id="btn-mute"
-                        class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition dark:text-white"
-                    >
-                        <i class="fas fa-microphone"></i>
-                    </button>
-
-
-                    <button
-                        onclick="toggleRoom(true)"
-                        class="w-14 h-14 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-xl hover:bg-red-500/20 transition"
-                    >
-                        <i class="fas fa-phone-slash"></i>
-                    </button>
-
-                </div>
-
-
-                <div class="text-right">
-
-                    <div
-                        class="flex items-center justify-between mb-2"
-                    >
-
-                        <p class="text-xs text-gray-400 font-bold">
-                            المشاركون في الغرفة:
-                        </p>
-
-                        <span
-                            id="active-room-count"
-                            class="text-xs text-accent font-bold"
-                        >
-                            1
-                        </span>
-
-                    </div>
-
-                    <div
-                        id="peers-list"
-                        class="space-y-2 text-sm text-gray-600 dark:text-gray-300"
-                    ></div>
-
-                </div>
-
-            </div>
-
-        </div>
-
-    </main>
-
-
-    <!-- Bottom Navigation -->
-    <nav
-        class="fixed bottom-0 w-full glass border-t border-gray-200 dark:border-gray-800 z-50 pb-safe"
-    >
-
-        <div
-            class="max-w-2xl mx-auto flex justify-around py-3"
-        >
-
-            <button
-                onclick="switchView('timeline')"
-                id="nav-timeline"
-                class="nav-btn active flex flex-col items-center gap-1 text-accent transition"
-            >
-                <i class="fas fa-home text-xl"></i>
-                <span class="text-xs font-bold">
-                    الرئيسية
-                </span>
-            </button>
-
-
-            <button
-                onclick="switchView('rooms')"
-                id="nav-rooms"
-                class="nav-btn flex flex-col items-center gap-1 text-gray-400 hover:text-accent transition"
-            >
-                <i class="fas fa-microphone-lines text-xl"></i>
-                <span class="text-xs font-bold">
-                    غرف صوتية
-                </span>
-            </button>
-
-        </div>
-
-    </nav>
-
-
-    <!-- Toast -->
     <div
-        id="toast"
-        class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-dark text-white px-6 py-3 rounded-full shadow-xl z-[100] hidden transition-all duration-300 flex items-center gap-2 text-sm"
+        class="max-w-2xl mx-auto px-4 py-3 flex justify-between items-center"
     >
 
-        <i
-            id="toast-icon"
-            class="fas fa-check-circle text-green-400"
-        ></i>
+        <h1
+            class="text-2xl font-black text-accent tracking-tight"
+        >
+            Pulse
+        </h1>
 
-        <span id="toast-msg">
-            تم بنجاح
-        </span>
+        <div
+            class="flex items-center gap-3"
+        >
+
+            <button
+                onclick="toggleTheme()"
+                class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition"
+            >
+
+                <i
+                    class="fas fa-moon dark:hidden text-gray-600"
+                ></i>
+
+                <i
+                    class="fas fa-sun hidden dark:block text-yellow-400"
+                ></i>
+
+            </button>
+
+
+            <div
+                class="flex items-center gap-2 bg-gray-100 dark:bg-surface px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700"
+            >
+
+                <div
+                    class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
+                ></div>
+
+                <span
+                    id="npub-display"
+                    class="text-xs font-mono text-gray-600 dark:text-gray-300"
+                >
+                    جاري...
+                </span>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</header>
+
+
+<!-- =====================================================
+     Main
+===================================================== -->
+
+<main
+    class="max-w-2xl mx-auto pt-20 pb-24 px-4"
+>
+
+
+<!-- =====================================================
+     Timeline
+===================================================== -->
+
+<div
+    id="view-timeline"
+    class="view-section fade-in"
+>
+
+    <!-- Composer -->
+
+    <div
+        class="bg-white dark:bg-surface rounded-2xl p-4 shadow-sm mb-6 border border-gray-100 dark:border-gray-800"
+    >
+
+        <textarea
+            id="post-input"
+            rows="3"
+            placeholder="بماذا تفكر؟ شارك المجتمع..."
+            class="w-full bg-transparent border-none focus:ring-0 text-lg resize-none placeholder-gray-400 dark:text-white"
+        ></textarea>
+
+
+        <div
+            class="flex justify-between items-center mt-3 pt-3 border-t border-gray-100 dark:border-gray-800"
+        >
+
+            <span
+                class="text-xs text-gray-400"
+            >
+                يتم النشر عبر شبكة Nostr اللامركزية
+            </span>
+
+
+            <button
+                onclick="publishPost()"
+                class="bg-accent hover:bg-orange-600 text-white px-6 py-2 rounded-full font-bold transition transform active:scale-95 shadow-md shadow-orange-500/20"
+            >
+
+                نشر
+
+                <i
+                    class="fas fa-paper-plane mr-1"
+                ></i>
+
+            </button>
+
+        </div>
 
     </div>
 
 
-    <script src="./app.js"></script>
+    <!-- Posts -->
+
+    <div
+        id="feed-container"
+        class="space-y-4"
+    ></div>
+
+
+    <!-- Loader -->
+
+    <div
+        id="loading-feed"
+        class="text-center py-8 text-gray-400"
+    >
+
+        <i
+            class="fas fa-circle-notch fa-spin text-2xl text-accent"
+        ></i>
+
+        <p
+            class="mt-2 text-sm"
+        >
+            جاري تحميل المنشورات من الشبكة...
+        </p>
+
+    </div>
+
+</div>
+
+
+<!-- =====================================================
+     Rooms
+===================================================== -->
+
+<div
+    id="view-rooms"
+    class="view-section hidden fade-in"
+>
+
+
+    <!-- Header / Create Room -->
+
+    <div
+        class="bg-gradient-to-br from-accent to-orange-600 rounded-2xl p-6 text-white shadow-lg mb-6"
+    >
+
+        <h2
+            class="text-2xl font-black mb-2"
+        >
+            🎙️ غرف صوتية مباشرة
+        </h2>
+
+        <p
+            class="opacity-90 mb-4 text-sm"
+        >
+            ادخل أي غرفة تريدها وتحدث مع الموجودين
+            مباشرة عبر WebRTC.
+        </p>
+
+
+        <div
+            class="flex gap-2"
+        >
+
+            <input
+                id="room-input"
+                type="text"
+                autocomplete="off"
+                placeholder="اسم الغرفة (مثال: tech)"
+                class="flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500"
+            >
+
+
+            <button
+                id="btn-join-room"
+                onclick="toggleRoom()"
+                class="bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md"
+            >
+                دخول
+            </button>
+
+        </div>
+
+    </div>
+
+
+    <!-- =================================================
+         Available Rooms
+    ================================================== -->
+
+    <div
+        class="mb-6"
+    >
+
+        <div
+            class="flex items-center justify-between mb-3 px-1"
+        >
+
+            <div>
+
+                <h3
+                    class="font-black text-lg dark:text-white"
+                >
+                    الغرف المتاحة
+                </h3>
+
+                <p
+                    class="text-xs text-gray-400 mt-1"
+                >
+                    اختر الغرفة التي تريد دخولها
+                </p>
+
+            </div>
+
+
+            <div
+                class="flex items-center gap-2 text-xs text-green-500"
+            >
+
+                <span
+                    class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
+                ></span>
+
+                مباشر
+
+            </div>
+
+        </div>
+
+
+        <div
+            id="available-rooms"
+            class="space-y-3"
+        >
+
+            <div
+                class="text-center py-5 text-gray-400 text-sm"
+            >
+
+                جاري البحث عن الغرف النشطة...
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- =================================================
+         Active Room
+    ================================================== -->
+
+    <div
+        id="active-room-ui"
+        class="hidden bg-white dark:bg-surface rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-800 text-center"
+    >
+
+        <div
+            class="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center mx-auto mb-4"
+        >
+
+            <i
+                class="fas fa-microphone text-3xl text-accent animate-pulse"
+            ></i>
+
+        </div>
+
+
+        <h3
+            id="current-room-name"
+            class="text-xl font-bold mb-1 dark:text-white"
+        >
+            اسم الغرفة
+        </h3>
+
+
+        <p
+            class="text-sm text-gray-400 mb-6"
+        >
+            أنت متصل الآن. المايكروفون نشط.
+        </p>
+
+
+        <!-- Controls -->
+
+        <div
+            class="flex justify-center gap-4 mb-6"
+        >
+
+            <button
+                onclick="toggleMute()"
+                id="btn-mute"
+                class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition dark:text-white"
+            >
+
+                <i
+                    class="fas fa-microphone"
+                ></i>
+
+            </button>
+
+
+            <button
+                onclick="leaveRoom(true)"
+                class="w-14 h-14 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-xl hover:bg-red-500/20 transition"
+            >
+
+                <i
+                    class="fas fa-phone-slash"
+                ></i>
+
+            </button>
+
+        </div>
+
+
+        <!-- Participants -->
+
+        <div
+            class="text-right"
+        >
+
+            <p
+                class="text-xs text-gray-400 mb-2 font-bold"
+            >
+                المشاركون في الغرفة:
+            </p>
+
+
+            <div
+                id="peers-list"
+                class="space-y-2 text-sm text-gray-600 dark:text-gray-300"
+            ></div>
+
+        </div>
+
+    </div>
+
+</div>
+
+</main>
+
+
+<!-- =====================================================
+     Bottom Navigation
+===================================================== -->
+
+<nav
+    class="fixed bottom-0 w-full glass border-t border-gray-200 dark:border-gray-800 z-50 pb-safe"
+>
+
+    <div
+        class="max-w-2xl mx-auto flex justify-around py-3"
+    >
+
+        <button
+            onclick="switchView('timeline')"
+            id="nav-timeline"
+            class="nav-btn active flex flex-col items-center gap-1 text-accent transition"
+        >
+
+            <i
+                class="fas fa-home text-xl"
+            ></i>
+
+            <span
+                class="text-xs font-bold"
+            >
+                الرئيسية
+            </span>
+
+        </button>
+
+
+        <button
+            onclick="switchView('rooms')"
+            id="nav-rooms"
+            class="nav-btn flex flex-col items-center gap-1 text-gray-400 hover:text-accent transition"
+        >
+
+            <i
+                class="fas fa-microphone-lines text-xl"
+            ></i>
+
+            <span
+                class="text-xs font-bold"
+            >
+                غرف صوتية
+            </span>
+
+        </button>
+
+    </div>
+
+</nav>
+
+
+<!-- =====================================================
+     Toast
+===================================================== -->
+
+<div
+    id="toast"
+    class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-dark text-white px-6 py-3 rounded-full shadow-xl z-[100] hidden transition-all duration-300 flex items-center gap-2 text-sm"
+>
+
+    <i
+        id="toast-icon"
+        class="fas fa-check-circle text-green-400"
+    ></i>
+
+    <span
+        id="toast-msg"
+    >
+        تم بنجاح
+    </span>
+
+</div>
+
+
+<!-- =====================================================
+     Application
+===================================================== -->
+
+<script src="./app.js"></script>
 
 </body>
 </html>
