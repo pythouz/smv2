@@ -1,4 +1,5 @@
-const CACHE_NAME = 'pulse-pwa-v2';
+const CACHE_NAME = 'pulse-pwa-v3';
+
 const urlsToCache = [
     './',
     './index.html',
@@ -6,23 +7,82 @@ const urlsToCache = [
     './manifest.json'
 ];
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', event => {
+    console.log('[SW] تثبيت النسخة الجديدة');
+
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            return cache.addAll(urlsToCache);
-        })
+        caches.open(CACHE_NAME)
+            .then(cache => cache.addAll(urlsToCache))
+            .then(() => self.skipWaiting())
     );
-    self.skipWaiting();
 });
 
-self.addEventListener('activate', (event) => {
-    event.waitUntil(clients.claim());
+
+self.addEventListener('activate', event => {
+    console.log('[SW] تفعيل النسخة الجديدة');
+
+    event.waitUntil(
+        caches.keys()
+            .then(cacheNames => {
+                return Promise.all(
+                    cacheNames
+                        .filter(name => name !== CACHE_NAME)
+                        .map(name => caches.delete(name))
+                );
+            })
+            .then(() => self.clients.claim())
+    );
 });
 
-self.addEventListener('fetch', (event) => {
+
+self.addEventListener('fetch', event => {
+
+    /*
+     * لا نستخدم Cache First للـ app.js.
+     *
+     * نريد دائمًا آخر نسخة من JavaScript
+     * حتى لا يبقى المتصفح على نسخة قديمة.
+     */
+
+    const url = new URL(event.request.url);
+
+    if (
+        url.pathname.endsWith('/app.js') ||
+        url.pathname.endsWith('/index.html') ||
+        url.pathname === '/'
+    ) {
+
+        event.respondWith(
+            fetch(event.request, {
+                cache: 'no-store'
+            })
+            .then(response => {
+
+                const copy = response.clone();
+
+                caches.open(CACHE_NAME)
+                    .then(cache => {
+                        cache.put(event.request, copy);
+                    });
+
+                return response;
+            })
+            .catch(() => {
+                return caches.match(event.request);
+            })
+        );
+
+        return;
+    }
+
+
+    /*
+     * باقي الملفات:
+     * Network First ثم Cache كحل احتياطي.
+     */
+
     event.respondWith(
-        fetch(event.request).catch(() => {
-            return caches.match(event.request);
-        })
+        fetch(event.request)
+            .catch(() => caches.match(event.request))
     );
 });
