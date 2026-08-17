@@ -1,19 +1,36 @@
 {
+  "id": "/",
   "name": "Pulse — منصة المجتمع الحي",
   "short_name": "Pulse",
-  "description": "منصة مجتمع حي للنقاش والغرف الصوتية باستخدام بروتوكول Nostr",
+  "description": "منصة مجتمع حي للنقاش والغرف الصوتية المباشرة عبر Nostr و WebRTC",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#F7F4EF",
-  "theme_color": "#FF4D00",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
+  "background_color": "#0b0f19",
+  "theme_color": "#FF4D00",
   "lang": "ar",
   "dir": "rtl",
+  "categories": ["social", "entertainment"],
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230F0F0F'/><text y='.9em' font-size='65' x='18' fill='%23FF4D00' font-weight='900' font-family='system-ui'>P</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='96' fill='%230F0F0F'/><text x='50%' y='54%' dominant-baseline='middle' text-anchor='middle' font-size='280' font-weight='900' font-family='system-ui,Arial' fill='%23FF4D00'>P</text></svg>",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='96' fill='%230F0F0F'/><text x='50%' y='54%' dominant-baseline='middle' text-anchor='middle' font-size='280' font-weight='900' font-family='system-ui,Arial' fill='%23FF4D00'>P</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%230F0F0F'/><text x='50%' y='54%' dominant-baseline='middle' text-anchor='middle' font-size='260' font-weight='900' font-family='system-ui,Arial' fill='%23FF4D00'>P</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }
