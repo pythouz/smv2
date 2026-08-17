@@ -1,24 +1,38 @@
 const RELAYS = ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'];
-const APP_TAG = 'pulse-platform'; // هذا هو الوسم السري الذي يجمع مجتمعك فقط
+const APP_TAG = 'pulse-platform';
 
 let skBytes, pk, npub;
 const storageKey = 'pulse_nsec_hex';
 
+// 1. تهيئة الهوية مع إصلاح تلقائي للأخطاء
 function initIdentity() {
     try {
         let hexSk = localStorage.getItem(storageKey);
-        if (!hexSk) {
+        
+        // إذا لم يوجد مفتاح أو كان طوله غير صحيح (يجب أن يكون 64 حرفاً)
+        if (!hexSk || hexSk.length !== 64) {
+            console.log("Generating new secure identity...");
             const newSk = NostrTools.generateSecretKey();
             hexSk = NostrTools.utils.bytesToHex(newSk);
             localStorage.setItem(storageKey, hexSk);
         }
+        
         skBytes = NostrTools.utils.hexToBytes(hexSk);
+        
+        // تحقق أمني إضافي للتأكد من أن المفتاح 32 بايت
+        if (!skBytes || skBytes.length !== 32) {
+            throw new Error("Invalid key length");
+        }
+
         pk = NostrTools.getPublicKey(skBytes);
         npub = NostrTools.nip19.npubEncode(pk);
         document.getElementById('npub-display').textContent = npub.slice(0, 8) + '...' + npub.slice(-6);
+        
     } catch (err) {
         console.error("Identity Error:", err);
-        showToast('فشل تهيئة الهوية', 'error');
+        // الحل الجذري: مسح المفتاح التالف وإعادة المحاولة
+        localStorage.removeItem(storageKey);
+        initIdentity();
     }
 }
 
@@ -27,11 +41,9 @@ const seenEvents = new Set();
 
 function startFeed() {
     document.getElementById('loading-feed').classList.remove('hidden');
-    
-    // 🔴 التعديل الأول: جلب المنشورات التي تحمل وسم تطبيقك فقط
     pool.subscribeMany(
         RELAYS,
-        [{ kinds: [1], '#t': [APP_TAG], limit: 30 }], 
+        [{ kinds: [1], '#t': [APP_TAG], limit: 30 }],
         {
             onevent: (event) => {
                 if (seenEvents.has(event.id)) return;
@@ -81,10 +93,15 @@ async function publishPost() {
     if (!content) return;
 
     try {
+        // تحقق نهائي قبل النشر
+        if (!skBytes || skBytes.length !== 32) {
+            throw new Error("المفتاح السري غير صالح، جاري إعادة التهيئة...");
+        }
+
         const eventTemplate = {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [['t', APP_TAG]], // 🔴 يتم وسم المنشور تلقائياً ليظهر في فيد تطبيقك
+            tags: [['t', APP_TAG]],
             content: content
         };
         
@@ -101,7 +118,13 @@ async function publishPost() {
         }
     } catch (err) {
         console.error("Publish Error:", err);
-        showToast('فشل النشر: ' + err.message, 'error');
+        showToast(err.message.includes('غير صالح') ? err.message : 'فشل النشر: ' + err.message, 'error');
+        // محاولة إصلاح ذاتي إذا فشل النشر بسبب المفتاح
+        if (err.message.includes('undefined') || err.message.includes('32 bytes')) {
+            localStorage.removeItem(storageKey);
+            initIdentity();
+            showToast('تم إصلاح الهوية، حاول النشر مرة أخرى', 'info');
+        }
     }
 }
 
@@ -140,90 +163,85 @@ async function replyToPost(targetId, targetPubkey) {
     }
 }
 
-// ── Voice Rooms Logic (محسنة لتشخيص الأخطاء) ──
+// ── Voice Rooms Logic (مع حفظ الحالة عند الـ Refresh) ──
 let localStream = null;
 let peer = null;
 let currentRoom = null;
 let roomSub = null;
 let isMuted = false;
 
-async function toggleRoom() {
+async function toggleRoom(forceLeave = false) {
     const btn = document.getElementById('btn-join-room');
     const input = document.getElementById('room-input');
     const activeUi = document.getElementById('active-room-ui');
 
-    if (!currentRoom) {
-        currentRoom = input.value.trim() || 'general';
-        
-        // 1. فحص المايكروفون أولاً
-        try {
-            localStream = await navigator.mediaDevices.getUserMedia({ 
-                audio: { echoCancellation: true, noiseSuppression: true } 
-            });
-        } catch (e) {
-            console.error("Mic Error:", e);
-            showToast('يرجى السماح باستخدام المايكروفون من إعدادات المتصفح (أيقونة القفل بجانب الرابط)', 'error');
-            return;
-        }
-
-        // 2. فحص خادم الصوت (PeerJS)
-        try {
-            // توليد معرف عشوائي آمن لتجنب التعارض
-            const safeId = 'p-' + Math.random().toString(36).substring(2, 8);
-            
-            peer = new Peer(safeId, {
-                host: '0.peerjs.com',
-                port: 443,
-                secure: true,
-                debug: 1
-            });
-            
-            peer.on('open', (id) => {
-                console.log('تم الاتصال بخادم الصوت بنجاح. المعرف:', id);
-                announcePresence(id);
-                listenForPeers();
-            });
-
-            peer.on('error', (err) => {
-                console.error('PeerJS Error:', err);
-                if (err.type === 'unavailable-id') {
-                    showToast('معرف المستخدم محجوز، جاري المحاولة...', 'info');
-                } else if (err.type === 'network') {
-                    showToast('فشل الاتصال بالشبكة. تحقق من الإنترنت', 'error');
-                } else {
-                    showToast('فشل خادم الصوت: ' + err.type, 'error');
-                }
-            });
-
-            peer.on('call', (call) => {
-                call.answer(localStream);
-                call.on('stream', (remoteStream) => {
-                    addPeerAudio(remoteStream, 'مستمع');
-                });
-            });
-
-            document.getElementById('current-room-name').textContent = `غرفة: ${currentRoom}`;
-            activeUi.classList.remove('hidden');
-            btn.textContent = 'مغادرة';
-            btn.classList.add('bg-red-500', 'text-white');
-            btn.classList.remove('bg-white', 'text-accent');
-            
-        } catch (err) {
-            console.error("Room Init Error:", err);
-            showToast('فشل تهيئة الغرفة: ' + err.message, 'error');
-        }
-    } else {
+    if (!currentRoom || forceLeave) {
         // مغادرة الغرفة
         if (roomSub) roomSub.close();
         if (peer) peer.destroy();
         if (localStream) localStream.getTracks().forEach(t => t.stop());
         
         currentRoom = null;
+        localStorage.removeItem('active_room'); // مسح الحالة
         activeUi.classList.add('hidden');
         document.getElementById('peers-list').innerHTML = '';
         btn.textContent = 'دخول';
         btn.classList.remove('bg-red-500', 'text-white');
         btn.classList.add('bg-white', 'text-accent');
+        input.disabled = false;
+        return;
+    }
+
+    // الدخول للغرفة
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { echoCancellation: true, noiseSuppression: true } 
+        });
+    } catch (e) {
+        console.error("Mic Error:", e);
+        showToast('يرجى السماح باستخدام المايكروفون من إعدادات المتصفح', 'error');
+        return;
+    }
+
+    try {
+        const safeId = 'p-' + Math.random().toString(36).substring(2, 8);
+        peer = new Peer(safeId, {
+            host: '0.peerjs.com',
+            port: 443,
+            secure: true,
+            debug: 0
+        });
+        
+        peer.on('open', (id) => {
+            announcePresence(id);
+            listenForPeers();
+        });
+
+        peer.on('error', (err) => {
+            console.error('PeerJS Error:', err);
+            showToast('فشل اتصال الصوت: ' + err.type, 'error');
+        });
+
+        peer.on('call', (call) => {
+            call.answer(localStream);
+            call.on('stream', (remoteStream) => {
+                addPeerAudio(remoteStream, 'مستمع');
+            });
+        });
+
+        document.getElementById('current-room-name').textContent = `غرفة: ${currentRoom}`;
+        activeUi.classList.remove('hidden');
+        btn.textContent = 'مغادرة';
+        btn.classList.add('bg-red-500', 'text-white');
+        btn.classList.remove('bg-white', 'text-accent');
+        input.disabled = true;
+        
+        // حفظ الحالة لاستعادتها عند الـ Refresh
+        localStorage.setItem('active_room', currentRoom);
+
+    } catch (err) {
+        console.error("Room Init Error:", err);
+        showToast('فشل تهيئة الغرفة: ' + err.message, 'error');
     }
 }
 
@@ -328,12 +346,25 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// ── Boot Sequence ──
 document.addEventListener('DOMContentLoaded', () => {
     if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
         document.documentElement.classList.add('dark');
     }
+    
     initIdentity();
     startFeed();
+
+    // 🔴 استعادة الغرفة إذا كان المستخدم قد عمل Refresh وهو بداخلها
+    const savedRoom = localStorage.getItem('active_room');
+    if (savedRoom) {
+        currentRoom = savedRoom;
+        document.getElementById('room-input').value = currentRoom;
+        // ننتظر قليلاً لضمان تحميل المكتبات ثم ندخل الغرفة تلقائياً
+        setTimeout(() => {
+            toggleRoom();
+        }, 1000);
+    }
 });
 
 if ('serviceWorker' in navigator) {
