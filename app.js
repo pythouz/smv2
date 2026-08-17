@@ -31,11 +31,10 @@ const pool = new NostrTools.SimplePool();
 
 const seenEvents = new Set();
 const renderedPosts = new Map();
-const profileCache = new Map(); // pubkey -> { name, picture }
+const profileCache = new Map();
 
 let postsSubscription = null;
 let reactionsSubscription = null;
-let profileSubscription = null;
 
 let localStream = null;
 let peer = null;
@@ -149,19 +148,17 @@ function showToast(message, type = 'success') {
 }
 
 /* =========================================================
-   الهوية Nostr (محسّنة: NIP-07 + استيراد/تصدير)
+   الهوية Nostr
    ========================================================= */
 
 async function initIdentity() {
     try {
-        // 1) محاولة NIP-07 أولاً (الأكثر أمانًا)
         if (window.nostr && typeof window.nostr.getPublicKey === 'function') {
             try {
                 pk = await window.nostr.getPublicKey();
                 npub = NostrTools.nip19.npubEncode(pk);
                 usingNip07 = true;
-                secretKeyHex = null; // لا نحتفظ بالمفتاح الخاص
-
+                secretKeyHex = null;
                 updateIdentityUI();
                 console.log('[Nostr] تم استخدام NIP-07');
                 showToast('تم الاتصال بامتداد Nostr (NIP-07)', 'success');
@@ -171,7 +168,6 @@ async function initIdentity() {
             }
         }
 
-        // 2) المفتاح المحلي
         let hexSk = localStorage.getItem(storageKey);
 
         const isValidHex =
@@ -196,8 +192,6 @@ async function initIdentity() {
 
         updateIdentityUI();
         console.log('[Nostr] الهوية جاهزة (محلية)');
-        console.log('[Nostr] Public Key:', pk);
-
     } catch (error) {
         console.error('[Nostr] فشل تهيئة الهوية:', error);
         localStorage.removeItem(storageKey);
@@ -230,11 +224,9 @@ async function signEvent(eventTemplate) {
     if (usingNip07 && window.nostr && window.nostr.signEvent) {
         return await window.nostr.signEvent(eventTemplate);
     }
-
     if (!secretKeyHex) {
         throw new Error('لا يوجد مفتاح توقيع متاح');
     }
-
     return NostrTools.finalizeEvent(eventTemplate, secretKeyHex);
 }
 
@@ -243,18 +235,14 @@ function exportKey() {
         showToast('أنت تستخدم امتداد Nostr. صدّر المفتاح من الامتداد نفسه.', 'info');
         return;
     }
-
     if (!secretKeyHex) {
         showToast('لا يوجد مفتاح للتصدير', 'error');
         return;
     }
-
     try {
         const nsec = NostrTools.nip19.nsecEncode(
             Uint8Array.from(secretKeyHex.match(/.{1,2}/g).map(b => parseInt(b, 16)))
         );
-
-        // نسخ إلى الحافظة إن أمكن
         if (navigator.clipboard) {
             navigator.clipboard.writeText(nsec).then(() => {
                 showToast('تم نسخ المفتاح الخاص (nsec). احفظه في مكان آمن!', 'success');
@@ -266,7 +254,6 @@ function exportKey() {
         }
     } catch (error) {
         console.error('[Key] تصدير فشل:', error);
-        // fallback: عرض الـ hex
         prompt('انسخ المفتاح (hex):', secretKeyHex);
     }
 }
@@ -303,7 +290,6 @@ function importKey() {
         updateIdentityUI();
         showToast('تم استيراد المفتاح بنجاح', 'success');
 
-        // إعادة تشغيل التغذية
         if (postsSubscription) {
             try { postsSubscription.close(); } catch (e) {}
         }
@@ -312,7 +298,6 @@ function importKey() {
         const container = $('feed-container');
         if (container) container.innerHTML = '';
         startFeed();
-
     } catch (error) {
         console.error('[Key] استيراد فشل:', error);
         showToast('فشل استيراد المفتاح: ' + getErrorMessage(error), 'error');
@@ -352,7 +337,6 @@ function fetchProfiles(pubkeys) {
                             name: meta.display_name || meta.name || null,
                             picture: meta.picture || null
                         });
-                        // تحديث البطاقات الظاهرة
                         document.querySelectorAll(`.post-card[data-author="${event.pubkey}"]`).forEach(card => {
                             const nameEl = card.querySelector('.author-name');
                             if (nameEl) nameEl.textContent = getDisplayName(event.pubkey);
@@ -380,13 +364,7 @@ function startFeed() {
     try {
         postsSubscription = pool.subscribeMany(
             RELAYS,
-            [
-                {
-                    kinds: [1],
-                    '#t': [APP_TAG],
-                    limit: 50
-                }
-            ],
+            [{ kinds: [1], '#t': [APP_TAG], limit: 50 }],
             {
                 onevent: event => {
                     if (!event || !event.id) return;
@@ -400,16 +378,13 @@ function startFeed() {
 
                     seenEvents.add(event.id);
                     limitSet(seenEvents, MAX_SEEN_EVENTS);
-
                     renderPost(event);
                 },
-
                 oneose: () => {
                     console.log('[Feed] تم تحميل المنشورات الأولية');
                     if (loading) loading.classList.add('hidden');
                     startReactionSubscription();
                 },
-
                 onclose: () => {
                     console.log('[Feed] اشتراك المنشورات أغلق');
                 }
@@ -499,13 +474,11 @@ function renderPost(event) {
     renderedPosts.set(event.id, div);
     limitMap(renderedPosts, MAX_RENDERED_POSTS);
     container.prepend(div);
-
-    // جلب الملف الشخصي
     fetchProfiles([event.pubkey]);
 }
 
 /* =========================================================
-   نشر منشور (كانت ناقصة!)
+   نشر منشور
    ========================================================= */
 
 async function publishPost() {
@@ -520,7 +493,6 @@ async function publishPost() {
         showToast('اكتب شيئًا قبل النشر', 'error');
         return;
     }
-
     if (content.length > 4000) {
         showToast('النص طويل جدًا', 'error');
         return;
@@ -530,26 +502,20 @@ async function publishPost() {
         const eventTemplate = {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [
-                ['t', APP_TAG]
-            ],
+            tags: [['t', APP_TAG]],
             content: content
         };
 
         const signedEvent = await signEvent(eventTemplate);
 
-        // Optimistic UI
         if (!seenEvents.has(signedEvent.id)) {
             seenEvents.add(signedEvent.id);
             renderPost(signedEvent);
         }
 
         await pool.publish(RELAYS, signedEvent);
-
         input.value = '';
         showToast('تم النشر بنجاح', 'success');
-        console.log('[Post] نُشر:', signedEvent.id);
-
     } catch (error) {
         console.error('[Post] فشل النشر:', error);
         showToast('فشل النشر: ' + getErrorMessage(error), 'error');
@@ -557,13 +523,12 @@ async function publishPost() {
 }
 
 /* =========================================================
-   Optimistic UI + Real-time reactions
+   الإعجابات والردود
    ========================================================= */
 
 function getReactionStats(postId) {
     const card = getPostCard(postId);
     if (!card) return null;
-
     return {
         card,
         likeButton: card.querySelector('.like-button'),
@@ -599,7 +564,6 @@ async function likePost(targetId, targetPubkey) {
         showToast('تعذر العثور على المنشور', 'error');
         return;
     }
-
     if (stats.likeButton.dataset.liked === 'true') {
         showToast('لقد أعجبت بهذا المنشور بالفعل', 'info');
         return;
@@ -622,12 +586,9 @@ async function likePost(targetId, targetPubkey) {
 
         const signedEvent = await signEvent(eventTemplate);
         await pool.publish(RELAYS, signedEvent);
-
-        console.log('[Like] تم نشر الإعجاب:', signedEvent.id);
         showToast('تم الإعجاب ❤️', 'success');
-
     } catch (error) {
-        console.error('[Like] فشل نشر الإعجاب:', error);
+        console.error('[Like] فشل:', error);
         updateLikeUI(targetId, false, -1);
         showToast('فشل إرسال الإعجاب: ' + getErrorMessage(error), 'error');
     }
@@ -638,28 +599,20 @@ function startReactionSubscription() {
     if (!postIds.length) return;
 
     if (reactionsSubscription) {
-        try { reactionsSubscription.close(); } catch (error) {}
+        try { reactionsSubscription.close(); } catch (e) {}
     }
 
     try {
         reactionsSubscription = pool.subscribeMany(
             RELAYS,
-            [
-                {
-                    kinds: [7, 1],
-                    '#e': postIds,
-                    limit: 500
-                }
-            ],
+            [{ kinds: [7, 1], '#e': postIds, limit: 500 }],
             {
                 onevent: event => {
                     if (!event || !event.id) return;
                     if (event.kind === 7) handleIncomingLike(event);
                     if (event.kind === 1) handleIncomingReply(event);
                 },
-                oneose: () => {
-                    console.log('[Reactions] تم تحميل التفاعلات الحالية');
-                }
+                oneose: () => console.log('[Reactions] تم التحميل')
             }
         );
     } catch (error) {
@@ -677,8 +630,6 @@ function handleIncomingLike(event) {
 
     const stats = getReactionStats(targetId);
     if (!stats) return;
-
-    // تجنب الزيادة المزدوجة للـ Optimistic UI
     if (event.pubkey === pk) return;
 
     const currentCount = Number(stats.likeCount.dataset.count || 0);
@@ -699,9 +650,7 @@ function handleIncomingReply(event) {
     const stats = getReactionStats(targetId);
     if (!stats) return;
 
-    if (document.querySelector(`[data-reply-id="${CSS.escape(event.id)}"]`)) {
-        return;
-    }
+    if (document.querySelector(`[data-reply-id="${CSS.escape(event.id)}"]`)) return;
 
     const replyCount = Number(stats.replyCount.dataset.count || 0);
     stats.replyCount.dataset.count = String(replyCount + 1);
@@ -713,23 +662,13 @@ function handleIncomingReply(event) {
     const reply = document.createElement('div');
     reply.dataset.replyId = event.id;
     reply.className = 'bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-sm';
-
     reply.innerHTML = `
-        <div class="text-xs text-gray-400 mb-1">
-            ${escapeHtml(getDisplayName(event.pubkey))}
-        </div>
-        <div class="text-gray-700 dark:text-gray-200">
-            ${escapeHtml(event.content)}
-        </div>
+        <div class="text-xs text-gray-400 mb-1">${escapeHtml(getDisplayName(event.pubkey))}</div>
+        <div class="text-gray-700 dark:text-gray-200">${escapeHtml(event.content)}</div>
     `;
-
     repliesContainer.appendChild(reply);
     fetchProfiles([event.pubkey]);
 }
-
-/* =========================================================
-   الرد (محسّن: modal إن وُجد، وإلا prompt)
-   ========================================================= */
 
 let pendingReply = null;
 
@@ -745,7 +684,6 @@ async function replyToPost(targetId, targetPubkey) {
         return;
     }
 
-    // fallback
     const content = prompt('اكتب ردك:');
     if (!content || !content.trim()) return;
     await sendReply(targetId, targetPubkey, content.trim());
@@ -765,7 +703,6 @@ async function confirmReply() {
         showToast('اكتب ردًا', 'error');
         return;
     }
-
     const { targetId, targetPubkey } = pendingReply;
     closeReplyModal();
     await sendReply(targetId, targetPubkey, content);
@@ -788,9 +725,8 @@ async function sendReply(targetId, targetPubkey, cleanContent) {
         handleIncomingReply(signedEvent);
         await pool.publish(RELAYS, signedEvent);
         showToast('تم إرسال الرد', 'success');
-
     } catch (error) {
-        console.error('[Reply] فشل الرد:', error);
+        console.error('[Reply] فشل:', error);
         showToast('فشل إرسال الرد: ' + getErrorMessage(error), 'error');
     }
 }
@@ -844,7 +780,6 @@ function createPeer() {
             '-' +
             Math.random().toString(36).slice(2, 8);
 
-        console.log('[WebRTC] إنشاء Peer:', peerId);
         let settled = false;
 
         try {
@@ -859,20 +794,15 @@ function createPeer() {
 
             peer.on('open', id => {
                 myPeerId = id;
-                console.log('[WebRTC] Peer مفتوح:', id);
                 if (!settled) {
                     settled = true;
                     resolve(peer);
                 }
             });
 
-            peer.on('call', call => {
-                console.log('[WebRTC] Incoming call من:', call.peer);
-                handleIncomingCall(call);
-            });
+            peer.on('call', call => handleIncomingCall(call));
 
             peer.on('error', error => {
-                console.error('[WebRTC] PeerJS Error:', error);
                 if (!settled) {
                     settled = true;
                     reject(error);
@@ -881,16 +811,9 @@ function createPeer() {
             });
 
             peer.on('disconnected', () => {
-                console.warn('[WebRTC] PeerJS disconnected');
                 showToast('انقطع اتصال خدمة الإشارة الصوتية', 'error');
             });
-
-            peer.on('close', () => {
-                console.warn('[WebRTC] PeerJS connection closed');
-            });
-
         } catch (error) {
-            console.error('[WebRTC] فشل إنشاء Peer:', error);
             reject(error);
         }
     });
@@ -943,8 +866,6 @@ async function joinRoom(roomName) {
     if (isJoiningRoom) return;
     isJoiningRoom = true;
 
-    console.log('[Room] محاولة دخول:', roomName);
-
     try {
         if (!navigator.mediaDevices?.getUserMedia) {
             throw new Error('المتصفح لا يدعم getUserMedia أو الصفحة ليست HTTPS');
@@ -990,17 +911,14 @@ async function joinRoom(roomName) {
         await announcePresence();
         listenForPeers();
 
-        // إعادة إعلان الحضور كل 45 ثانية
         if (window._presenceInterval) clearInterval(window._presenceInterval);
         window._presenceInterval = setInterval(() => {
             if (currentRoom) announcePresence();
         }, 45000);
 
         showToast('دخلت غرفة "' + roomName + '" 🎙️', 'success');
-        console.log('[Room] تم الدخول بنجاح:', roomName);
-
     } catch (error) {
-        console.error('[Room] فشل دخول الغرفة:', error);
+        console.error('[Room] فشل:', error);
         showToast('فشل دخول الغرفة: ' + getErrorMessage(error), 'error');
         cleanupRoomResources(false);
     } finally {
@@ -1061,9 +979,8 @@ async function announcePresence() {
     try {
         const event = await signEvent(eventTemplate);
         await pool.publish(RELAYS, event);
-        console.log('[Nostr Room] نشر presence:', event.id);
     } catch (error) {
-        console.error('[Nostr Room] فشل نشر presence:', error);
+        console.error('[Nostr Room] فشل presence:', error);
         showToast('تم تشغيل الغرفة لكن تعذر إعلان وجودك للشبكة', 'error');
     }
 }
@@ -1080,21 +997,14 @@ function listenForPeers() {
     try {
         roomSubscription = pool.subscribeMany(
             RELAYS,
-            [
-                {
-                    kinds: [ROOM_EVENT_KIND],
-                    '#t': [tag],
-                    limit: 100
-                }
-            ],
+            [{ kinds: [ROOM_EVENT_KIND], '#t': [tag], limit: 100 }],
             {
                 onevent: event => handleRoomPresence(event),
-                oneose: () => console.log('[Nostr Room] تم تحميل المشاركين الحاليين'),
-                onclose: () => console.log('[Nostr Room] اشتراك الغرفة أغلق')
+                oneose: () => {},
+                onclose: () => {}
             }
         );
     } catch (error) {
-        console.error('[Nostr Room] subscribeMany Error:', error);
         showToast('فشل نظام اكتشاف المشاركين: ' + getErrorMessage(error), 'error');
     }
 }
@@ -1113,15 +1023,9 @@ function handleRoomPresence(event) {
     if (!data.peerId) return;
     if (data.room && safeRoomName(data.room) !== safeRoomName(currentRoom)) return;
     if (announcedPeers.has(data.peerId)) return;
-
-    // حد أقصى للمشاركين في الـ mesh (تقريبًا 6)
-    if (activeCalls.size >= 5) {
-        console.warn('[Room] تم الوصول للحد الأقصى من الاتصالات');
-        return;
-    }
+    if (activeCalls.size >= 5) return;
 
     announcedPeers.add(data.peerId);
-    console.log('[Room] مشارك جديد:', data.peerId);
 
     if (myPeerId && myPeerId < data.peerId) {
         connectToPeer(data.peerId, data.npub || data.peerId);
@@ -1133,8 +1037,6 @@ function connectToPeer(targetPeerId, displayName) {
     if (targetPeerId === myPeerId) return;
     if (activeCalls.has(targetPeerId)) return;
 
-    console.log('[WebRTC] بدء اتصال مع:', targetPeerId);
-
     try {
         const call = peer.call(targetPeerId, localStream, {
             metadata: { room: currentRoom, caller: myPeerId }
@@ -1142,7 +1044,6 @@ function connectToPeer(targetPeerId, displayName) {
         if (!call) return;
         handleCallEvents(call, displayName);
     } catch (error) {
-        console.error('[WebRTC] peer.call فشل:', error);
         showToast('تعذر بدء الاتصال الصوتي مع مشارك', 'error');
     }
 }
@@ -1161,7 +1062,6 @@ function handleIncomingCall(call) {
         call.answer(localStream);
         handleCallEvents(call, call.peer);
     } catch (error) {
-        console.error('[WebRTC] فشل الرد على المكالمة:', error);
         try { call.close(); } catch (e) {}
     }
 }
@@ -1174,10 +1074,8 @@ function handleCallEvents(call, displayName) {
     call.on('stream', remoteStream => {
         addPeerAudio(remoteStream, peerId, displayName);
     });
-
     call.on('close', () => removePeerCall(peerId));
-    call.on('error', error => {
-        console.error('[WebRTC] Call Error:', peerId, error);
+    call.on('error', () => {
         showToast('انقطع اتصال أحد المشاركين', 'error');
         removePeerCall(peerId);
     });
@@ -1289,7 +1187,6 @@ function toggleMute() {
 }
 
 async function leaveRoom() {
-    console.log('[Room] مغادرة الغرفة:', currentRoom);
     const previousRoom = currentRoom;
     currentRoom = null;
     localStorage.removeItem('active_room');
@@ -1399,11 +1296,8 @@ async function requestSystemLock() {
     try {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
-            console.log('[Room] Wake Lock activated');
         }
-    } catch (error) {
-        console.warn('[Room] Wake Lock غير متاح:', error);
-    }
+    } catch (error) {}
 }
 
 function setupVAD() {
@@ -1439,9 +1333,7 @@ function setupVAD() {
                     : 'الحالة: متصل (صامت)';
             }
         }, 200);
-    } catch (error) {
-        console.error('[VAD] Error:', error);
-    }
+    } catch (error) {}
 }
 
 async function restoreRoomAfterRefresh() {
@@ -1457,13 +1349,12 @@ async function restoreRoomAfterRefresh() {
     try {
         await joinRoom(safeRoomName(savedRoom));
     } catch (error) {
-        console.error('[Room] فشل إعادة الدخول التلقائي:', error);
         showToast('كانت لديك غرفة مفتوحة. اضغط "دخول" لإعادة الاتصال.', 'info');
     }
 }
 
 /* =========================================================
-   التنقل والمظهر
+   التنقل والمظهر (مع حفظ الصفحة)
    ========================================================= */
 
 function switchView(viewName) {
@@ -1484,6 +1375,8 @@ function switchView(viewName) {
         active.classList.add('text-accent', 'active');
         active.classList.remove('text-gray-400');
     }
+
+    localStorage.setItem('pulse_view', viewName);
 }
 
 function toggleTheme() {
@@ -1504,7 +1397,7 @@ function toggleSettings() {
    ========================================================= */
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('[Pulse] بدء تشغيل التطبيق (نسخة محسّنة)');
+    console.log('[Pulse] بدء تشغيل التطبيق');
 
     if (
         localStorage.getItem('theme') === 'dark' ||
@@ -1517,44 +1410,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initIdentity();
     startFeed();
 
+    // استعادة الصفحة الأخيرة
+    const savedView = localStorage.getItem('pulse_view') || 'timeline';
+    switchView(savedView);
+
     const savedRoom = localStorage.getItem('active_room');
     if (savedRoom) {
+        switchView('rooms');
         setTimeout(() => restoreRoomAfterRefresh(), 1200);
     }
 });
-
-/* =========================================================
-   Service Worker
-   ========================================================= */
 
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker
             .register('./sw.js')
-            .then(() => console.log('[SW] Service Worker Registered'))
-            .catch(error => console.warn('[SW] Service Worker Failed:', error));
+            .then(() => console.log('[SW] Registered'))
+            .catch(error => console.warn('[SW] Failed:', error));
     });
 }
-
-/* =========================================================
-   جعل الدوال متاحة لأزرار HTML
-   ========================================================= */
 
 window.publishPost = publishPost;
 window.likePost = likePost;
 window.replyToPost = replyToPost;
 window.confirmReply = confirmReply;
 window.closeReplyModal = closeReplyModal;
-
 window.toggleRoom = toggleRoom;
 window.toggleMute = toggleMute;
-
 window.switchView = switchView;
 window.toggleTheme = toggleTheme;
 window.toggleSettings = toggleSettings;
-
 window.exportKey = exportKey;
 window.importKey = importKey;
 window.copyNpub = copyNpub;
-
 window.showToast = showToast;
