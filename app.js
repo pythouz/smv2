@@ -16,6 +16,11 @@ const MAX_SEEN_EVENTS = 2000;
 const MAX_RENDERED_POSTS = 80;
 const MAX_PROCESSED_LIKES = 1500;
 
+// اكتشاف الغرف الحية: تاج عام يُضاف لكل حدث حضور، بغض النظر عن اسم الغرفة
+const DISCOVERY_TAG = APP_TAG + ':room-directory';
+// أي حضور أقدم من كده يعتبر منتهي (المستخدم غادر الغرفة أو قفل التبويب)
+const ROOM_PRESENCE_TTL_MS = 90 * 1000;
+
 /* =========================================================
    الحالة العامة
    ========================================================= */
@@ -35,6 +40,11 @@ const profileCache = new Map();
 
 let postsSubscription = null;
 let reactionsSubscription = null;
+
+// اكتشاف الغرف: roomName -> Map(pubkey -> { peerId, lastSeen })
+const discoveredRooms = new Map();
+let directorySubscription = null;
+let directoryCleanupInterval = null;
 
 let localStream = null;
 let peer = null;
@@ -931,8 +941,11 @@ function updateRoomUI(joined) {
     const input = $('room-input');
     const activeUi = $('active-room-ui');
 
+    const directoryUi = $('live-rooms-section');
+
     if (joined) {
         if (activeUi) activeUi.classList.remove('hidden');
+        if (directoryUi) directoryUi.classList.add('hidden');
         if (btn) {
             btn.textContent = 'مغادرة';
             btn.classList.remove('bg-white', 'text-accent');
@@ -944,6 +957,7 @@ function updateRoomUI(joined) {
         }
     } else {
         if (activeUi) activeUi.classList.add('hidden');
+        if (directoryUi) directoryUi.classList.remove('hidden');
         if (btn) {
             btn.textContent = 'دخول';
             btn.classList.remove('bg-red-500', 'text-white');
@@ -966,6 +980,7 @@ async function announcePresence() {
         created_at: Math.floor(Date.now() / 1000),
         tags: [
             ['t', tag],
+            ['t', DISCOVERY_TAG],
             ['room', safeRoomName(currentRoom)]
         ],
         content: JSON.stringify({
@@ -1184,6 +1199,121 @@ function toggleMute() {
     }
 
     showToast(isMuted ? 'تم كتم الميكروفون' : 'تم تشغيل الميكروفون', 'success');
+}
+
+/* =========================================================
+   اكتشاف الغرف الحية (Room Directory)
+   يسمح للمستخدم برؤية الغرف المفتوحة حالياً بدل ما يحتاج
+   يعرف اسمها مسبقاً.
+   ========================================================= */
+
+function startRoomDirectory() {
+    if (directorySubscription) return; // شغّالة بالفعل
+
+    try {
+        directorySubscription = pool.subscribeMany(
+            RELAYS,
+            [{ kinds: [ROOM_EVENT_KIND], '#t': [DISCOVERY_TAG], limit: 300 }],
+            {
+                onevent: event => handleDirectoryPresence(event),
+                oneose: () => renderRoomDirectory(),
+                onclose: () => {}
+            }
+        );
+    } catch (error) {
+        console.warn('[Room Directory] فشل الاشتراك:', error);
+    }
+
+    if (!directoryCleanupInterval) {
+        directoryCleanupInterval = setInterval(() => {
+            pruneRoomDirectory();
+            renderRoomDirectory();
+        }, 15000);
+    }
+}
+
+function handleDirectoryPresence(event) {
+    if (!event?.content) return;
+
+    let data;
+    try {
+        data = JSON.parse(event.content);
+    } catch (e) {
+        return;
+    }
+
+    const roomTagValue = event.tags.find(t => t[0] === 'room')?.[1];
+    const roomName = safeRoomName(roomTagValue || data.room || '');
+    if (!roomName || !data.peerId) return;
+
+    if (!discoveredRooms.has(roomName)) {
+        discoveredRooms.set(roomName, new Map());
+    }
+
+    discoveredRooms.get(roomName).set(event.pubkey, {
+        peerId: data.peerId,
+        lastSeen: Date.now()
+    });
+
+    renderRoomDirectory();
+}
+
+function pruneRoomDirectory() {
+    const now = Date.now();
+    discoveredRooms.forEach((members, roomName) => {
+        members.forEach((info, pubkey) => {
+            if (now - info.lastSeen > ROOM_PRESENCE_TTL_MS) {
+                members.delete(pubkey);
+            }
+        });
+        if (members.size === 0) {
+            discoveredRooms.delete(roomName);
+        }
+    });
+}
+
+function renderRoomDirectory() {
+    const container = $('live-rooms-list');
+    const emptyState = $('live-rooms-empty');
+    if (!container) return;
+
+    pruneRoomDirectory();
+
+    const rooms = Array.from(discoveredRooms.entries())
+        .map(([name, members]) => ({ name, count: members.size }))
+        .filter(r => r.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 12);
+
+    if (rooms.length === 0) {
+        container.innerHTML = '';
+        if (emptyState) emptyState.classList.remove('hidden');
+        return;
+    }
+
+    if (emptyState) emptyState.classList.add('hidden');
+
+    container.innerHTML = rooms.map(room => `
+        <button
+            onclick="joinDiscoveredRoom('${room.name.replace(/'/g, "\\'")}')"
+            class="w-full flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition rounded-xl px-4 py-3 text-right"
+        >
+            <span class="flex items-center gap-2 text-sm font-bold text-gray-800 dark:text-gray-100">
+                <i class="fas fa-circle text-[8px] text-green-500 animate-pulse"></i>
+                ${escapeHtml(room.name)}
+            </span>
+            <span class="text-xs text-gray-400 shrink-0">
+                <i class="fas fa-user-friends ml-1"></i>${room.count}
+            </span>
+        </button>
+    `).join('');
+}
+
+function joinDiscoveredRoom(roomName) {
+    if (currentRoom) return;
+    const input = $('room-input');
+    if (input) input.value = roomName;
+    joinRoom(safeRoomName(roomName));
 }
 
 async function leaveRoom() {
@@ -1409,6 +1539,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await initIdentity();
     startFeed();
+    startRoomDirectory();
 
     // استعادة الصفحة الأخيرة
     const savedView = localStorage.getItem('pulse_view') || 'timeline';
@@ -1437,6 +1568,7 @@ window.confirmReply = confirmReply;
 window.closeReplyModal = closeReplyModal;
 window.toggleRoom = toggleRoom;
 window.toggleMute = toggleMute;
+window.joinDiscoveredRoom = joinDiscoveredRoom;
 window.switchView = switchView;
 window.toggleTheme = toggleTheme;
 window.toggleSettings = toggleSettings;
