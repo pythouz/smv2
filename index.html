@@ -3,43 +3,24 @@
 
 <head>
     <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    >
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#FF4D00">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-
     <title>Pulse — منصة المجتمع الحي</title>
-
     <link rel="manifest" href="./manifest.json">
-
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700;900&display=swap"
-        rel="stylesheet"
-    >
-
-    <link
-        rel="stylesheet"
-        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
-    >
-
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/nostr-tools@2.10.0/lib/nostr.bundle.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-
     <script>
         tailwind.config = {
             darkMode: 'class',
             theme: {
                 extend: {
-                    fontFamily: {
-                        sans: ['IBM Plex Sans Arabic', 'sans-serif']
-                    },
+                    fontFamily: { sans: ['IBM Plex Sans Arabic', 'sans-serif'] },
                     colors: {
                         accent: '#FF4D00',
                         dark: '#0F0F0F',
@@ -51,453 +32,216 @@
             }
         };
     </script>
-
     <style>
-        body {
-            font-family: 'IBM Plex Sans Arabic', sans-serif;
-            background-color: #F7F4EF;
-        }
-
-        .dark body {
-            background-color: #0b0f19;
-            color: #E5E5E5;
-        }
-
-        .glass {
-            background: rgba(247, 244, 239, 0.85);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-        }
-
-        .dark .glass {
-            background: rgba(11, 15, 25, 0.85);
-        }
-
-        .avatar {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            font-weight: 900;
-            color: white;
-            flex-shrink: 0;
-        }
-
-        .hidden {
-            display: none !important;
-        }
-
-        .fade-in {
-            animation: fadeIn 0.3s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(8px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        ::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 3px;
-        }
-
-        .dark ::-webkit-scrollbar-thumb {
-            background: #334155;
-        }
-
-        .post-card {
-            transition: all 0.2s ease;
-        }
-
-        .post-card:active {
-            transform: scale(0.98);
-        }
-
-        .like-button {
-            transition: color 0.15s ease, transform 0.15s ease;
-        }
-
-        button {
-            -webkit-tap-highlight-color: transparent;
-        }
-
-        #audio-container {
-            position: fixed;
-            width: 1px;
-            height: 1px;
-            overflow: hidden;
-            opacity: 0;
-            pointer-events: none;
-            bottom: 0;
-            left: 0;
-        }
-
-        .pb-safe {
-            padding-bottom: env(safe-area-inset-bottom);
-        }
-
-        .modal-overlay {
-            background: rgba(0, 0, 0, 0.55);
-            backdrop-filter: blur(4px);
-        }
-
-        /* إصلاح حقل الغرفة على الموبايل */
-        #room-input {
-            box-sizing: border-box;
-            min-width: 0;
-        }
+        body { font-family: 'IBM Plex Sans Arabic', sans-serif; background-color: #F7F4EF; }
+        .dark body { background-color: #0b0f19; color: #E5E5E5; }
+        .glass { background: rgba(247, 244, 239, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+        .dark .glass { background: rgba(11, 15, 25, 0.85); }
+        .avatar { display: flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: 900; color: white; flex-shrink: 0; overflow: hidden; }
+        .hidden { display: none !important; }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .dark ::-webkit-scrollbar-thumb { background: #334155; }
+        .post-card { transition: all 0.2s ease; }
+        .post-card:active { transform: scale(0.98); }
+        .like-button { transition: color 0.15s ease, transform 0.15s ease; }
+        button { -webkit-tap-highlight-color: transparent; }
+        #audio-container { position: fixed; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; bottom: 0; left: 0; }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+        .modal-overlay { background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(4px); }
+        #room-input { box-sizing: border-box; min-width: 0; }
     </style>
 </head>
 
 <body class="transition-colors duration-300 min-h-screen">
 
-    <!-- HEADER -->
     <header class="fixed top-0 w-full z-50 glass border-b border-gray-200/50 dark:border-gray-800/50">
         <div class="max-w-2xl mx-auto px-4 py-3 flex justify-between items-center">
-
-            <h1 class="text-2xl font-black text-accent tracking-tight">
-                Pulse
-            </h1>
-
+            <h1 class="text-2xl font-black text-accent tracking-tight">Pulse</h1>
             <div class="flex items-center gap-2">
-
-                <button
-                    onclick="toggleTheme()"
-                    class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition"
-                    aria-label="تغيير المظهر"
-                >
+                <button onclick="toggleTheme()" class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition" aria-label="تغيير المظهر">
                     <i class="fas fa-moon dark:hidden text-gray-600"></i>
                     <i class="fas fa-sun hidden dark:block text-yellow-400"></i>
                 </button>
-
-                <button
-                    onclick="toggleSettings()"
-                    class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition"
-                    aria-label="الإعدادات"
-                    title="إعدادات الهوية"
-                >
+                <button onclick="openProfileModal()" id="header-avatar-btn"
+                    class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition overflow-hidden border border-gray-200 dark:border-gray-700"
+                    aria-label="الملف الشخصي" title="الملف الشخصي">
+                    <img id="header-avatar-img" class="hidden w-full h-full object-cover" alt="">
+                    <span id="header-avatar-fallback" class="text-xs font-black text-accent">P</span>
+                </button>
+                <button onclick="toggleSettings()" class="w-9 h-9 rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-800 transition" aria-label="الإعدادات" title="إعدادات الهوية">
                     <i class="fas fa-cog text-gray-600 dark:text-gray-300"></i>
                 </button>
-
-                <div
-                    class="flex items-center gap-2 bg-gray-100 dark:bg-surface px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 cursor-pointer"
-                    onclick="copyNpub()"
-                    title="انقر لنسخ npub"
-                >
+                <div class="flex items-center gap-2 bg-gray-100 dark:bg-surface px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 cursor-pointer" onclick="copyNpub()" title="انقر لنسخ npub">
                     <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                    <span
-                        id="npub-display"
-                        class="text-xs font-mono text-gray-600 dark:text-gray-300"
-                    >
-                        جاري...
-                    </span>
-                    <span
-                        id="nip07-badge"
-                        class="hidden text-[10px] font-bold bg-green-500/20 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded"
-                    >
-                        NIP-07
-                    </span>
+                    <span id="npub-display" class="text-xs font-mono text-gray-600 dark:text-gray-300">جاري...</span>
+                    <span id="nip07-badge" class="hidden text-[10px] font-bold bg-green-500/20 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded">NIP-07</span>
                 </div>
-
             </div>
         </div>
     </header>
 
-    <!-- SETTINGS PANEL -->
-    <div
-        id="settings-panel"
-        class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-[60] w-[min(92vw,28rem)] bg-white dark:bg-surface rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5 fade-in"
-    >
+    <div id="settings-panel" class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-[60] w-[min(92vw,28rem)] bg-white dark:bg-surface rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5 fade-in">
         <div class="flex items-center justify-between mb-4">
-            <h3 class="font-bold text-lg dark:text-white">
-                إعدادات الهوية
-            </h3>
-            <button
-                onclick="toggleSettings()"
-                class="w-8 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center"
-            >
+            <h3 class="font-bold text-lg dark:text-white">إعدادات الهوية</h3>
+            <button onclick="toggleSettings()" class="w-8 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center">
                 <i class="fas fa-times text-gray-500"></i>
             </button>
         </div>
-
         <p class="text-xs text-gray-500 dark:text-gray-400 mb-4 leading-relaxed">
-            المفتاح الخاص يُخزَّن على جهازك فقط. استخدم امتداد Nostr (NIP-07) إن أمكن لأنه أكثر أمانًا.
-            صدّر مفتاحك واحفظه في مكان آمن.
+            المفتاح الخاص يُخزَّن على جهازك فقط. استخدم امتداد Nostr (NIP-07) إن أمكن. صدّر مفتاحك واحفظه في مكان آمن.
         </p>
-
         <div class="space-y-2">
-            <button
-                onclick="copyNpub()"
-                class="w-full flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 py-2.5 rounded-xl text-sm font-medium transition dark:text-white"
-            >
-                <i class="fas fa-copy"></i>
-                نسخ npub
+            <button onclick="openProfileModal()" class="w-full flex items-center justify-center gap-2 bg-accent/10 text-accent hover:bg-accent/20 py-2.5 rounded-xl text-sm font-medium transition">
+                <i class="fas fa-user-edit"></i> تعديل الملف الشخصي
             </button>
-
-            <button
-                onclick="exportKey()"
-                class="w-full flex items-center justify-center gap-2 bg-orange-50 dark:bg-orange-500/10 text-accent hover:bg-orange-100 dark:hover:bg-orange-500/20 py-2.5 rounded-xl text-sm font-medium transition"
-            >
-                <i class="fas fa-key"></i>
-                تصدير المفتاح الخاص (nsec)
+            <button onclick="copyNpub()" class="w-full flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 py-2.5 rounded-xl text-sm font-medium transition dark:text-white">
+                <i class="fas fa-copy"></i> نسخ npub
             </button>
-
-            <button
-                onclick="importKey()"
-                class="w-full flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 py-2.5 rounded-xl text-sm font-medium transition dark:text-white"
-            >
-                <i class="fas fa-file-import"></i>
-                استيراد مفتاح
+            <button onclick="exportKey()" class="w-full flex items-center justify-center gap-2 bg-orange-50 dark:bg-orange-500/10 text-accent hover:bg-orange-100 dark:hover:bg-orange-500/20 py-2.5 rounded-xl text-sm font-medium transition">
+                <i class="fas fa-key"></i> تصدير المفتاح الخاص (nsec)
+            </button>
+            <button onclick="importKey()" class="w-full flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 py-2.5 rounded-xl text-sm font-medium transition dark:text-white">
+                <i class="fas fa-file-import"></i> استيراد مفتاح
             </button>
         </div>
-
-        <p class="text-[11px] text-red-500/80 mt-4 leading-relaxed">
-            ⚠️ لا تشارك مفتاحك الخاص (nsec) مع أي شخص. من يملكه يملك حسابك.
-        </p>
+        <p class="text-[11px] text-red-500/80 mt-4 leading-relaxed">⚠️ لا تشارك مفتاحك الخاص (nsec) مع أي شخص.</p>
     </div>
 
-    <!-- MAIN -->
     <main class="max-w-2xl mx-auto pt-20 pb-24 px-4">
-
-        <!-- TIMELINE -->
         <div id="view-timeline" class="view-section fade-in">
-
             <div class="bg-white dark:bg-surface rounded-2xl p-4 shadow-sm mb-6 border border-gray-100 dark:border-gray-800">
-                <textarea
-                    id="post-input"
-                    rows="3"
-                    placeholder="بماذا تفكر؟ شارك المجتمع..."
-                    class="w-full bg-transparent border-none focus:ring-0 text-lg resize-none placeholder-gray-400 dark:text-white outline-none"
-                ></textarea>
-
+                <textarea id="post-input" rows="3" placeholder="بماذا تفكر؟ شارك المجتمع..."
+                    class="w-full bg-transparent border-none focus:ring-0 text-lg resize-none placeholder-gray-400 dark:text-white outline-none"></textarea>
                 <div class="flex justify-between items-center mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
-                    <span class="text-xs text-gray-400">
-                        يتم النشر عبر شبكة Nostr اللامركزية
-                    </span>
-
-                    <button
-                        onclick="publishPost()"
-                        class="bg-accent hover:bg-orange-600 text-white px-6 py-2 rounded-full font-bold transition transform active:scale-95 shadow-md shadow-orange-500/20"
-                    >
-                        نشر
-                        <i class="fas fa-paper-plane mr-1"></i>
+                    <span class="text-xs text-gray-400">يتم النشر عبر شبكة Nostr اللامركزية</span>
+                    <button onclick="publishPost()" class="bg-accent hover:bg-orange-600 text-white px-6 py-2 rounded-full font-bold transition transform active:scale-95 shadow-md shadow-orange-500/20">
+                        نشر <i class="fas fa-paper-plane mr-1"></i>
                     </button>
                 </div>
             </div>
-
             <div id="feed-container" class="space-y-4"></div>
-
             <div id="loading-feed" class="text-center py-8 text-gray-400">
                 <i class="fas fa-circle-notch fa-spin text-2xl text-accent"></i>
-                <p class="mt-2 text-sm">
-                    جاري تحميل المنشورات من الشبكة...
-                </p>
+                <p class="mt-2 text-sm">جاري تحميل المنشورات من الشبكة...</p>
             </div>
-
         </div>
 
-        <!-- ROOMS -->
         <div id="view-rooms" class="view-section hidden fade-in">
-
             <div class="bg-gradient-to-br from-accent to-orange-600 rounded-2xl p-5 sm:p-6 text-white shadow-lg mb-6">
-                <h2 class="text-2xl font-black mb-2">
-                    🎙️ غرف صوتية مباشرة
-                </h2>
-                <p class="opacity-90 mb-4 text-sm">
-                    تواصل مع المجتمع صوتياً بشكل لامركزي عبر WebRTC.
-                    يُفضّل ألا يتجاوز عدد المشاركين 5–6 أشخاص.
-                </p>
-
-                <!-- حقل الغرفة: عمودي على الموبايل، أفقي على الشاشات الأكبر -->
+                <h2 class="text-2xl font-black mb-2">🎙️ غرف صوتية مباشرة</h2>
+                <p class="opacity-90 mb-4 text-sm">تواصل مع المجتمع صوتياً بشكل لامركزي عبر WebRTC. يُفضّل ألا يتجاوز عدد المشاركين 5–6 أشخاص.</p>
                 <div class="flex flex-col sm:flex-row gap-2 w-full">
-                    <input
-                        id="room-input"
-                        type="text"
-                        autocomplete="off"
-                        placeholder="اسم الغرفة (مثال: tech)"
-                        class="w-full min-w-0 flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500"
-                    >
-
-                    <button
-                        id="btn-join-room"
-                        onclick="toggleRoom()"
-                        class="w-full sm:w-auto shrink-0 bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md"
-                    >
-                        دخول
-                    </button>
+                    <input id="room-input" type="text" autocomplete="off" placeholder="اسم الغرفة (مثال: tech)"
+                        class="w-full min-w-0 flex-1 px-4 py-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-500">
+                    <button id="btn-join-room" onclick="toggleRoom()"
+                        class="w-full sm:w-auto shrink-0 bg-white text-accent font-black px-6 py-3 rounded-xl hover:bg-gray-100 transition shadow-md">دخول</button>
                 </div>
             </div>
 
-            <!-- الغرف الحية الآن (اكتشاف تلقائي بدون معرفة الاسم) -->
             <div id="live-rooms-section" class="bg-white dark:bg-surface rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-gray-800 mb-6">
                 <div class="flex items-center justify-between mb-3">
-                    <h3 class="text-sm font-black text-gray-700 dark:text-gray-200">
-                        الغرف المباشرة الآن
-                    </h3>
+                    <h3 class="text-sm font-black text-gray-700 dark:text-gray-200">الغرف المباشرة الآن</h3>
                     <i class="fas fa-broadcast-tower text-accent text-sm"></i>
                 </div>
-
                 <div id="live-rooms-list" class="space-y-2"></div>
-
-                <p id="live-rooms-empty" class="text-xs text-gray-400 text-center py-4">
-                    لا توجد غرف مفتوحة الآن. اكتب اسم غرفة وابدأ واحدة جديدة 🎙️
-                </p>
+                <p id="live-rooms-empty" class="text-xs text-gray-400 text-center py-4">لا توجد غرف مفتوحة الآن. اكتب اسم غرفة وابدأ واحدة جديدة 🎙️</p>
             </div>
 
-            <!-- Active room -->
-            <div
-                id="active-room-ui"
-                class="hidden bg-white dark:bg-surface rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-800 text-center"
-            >
+            <div id="active-room-ui" class="hidden bg-white dark:bg-surface rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-800 text-center">
                 <div class="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center mx-auto mb-4">
                     <i class="fas fa-microphone text-3xl text-accent animate-pulse"></i>
                 </div>
-
-                <h3
-                    id="current-room-name"
-                    class="text-xl font-bold mb-1 dark:text-white"
-                >
-                    اسم الغرفة
-                </h3>
-
-                <p class="text-sm text-gray-400 mb-2">
-                    أنت متصل الآن. المايكروفون نشط.
-                </p>
-
-                <p id="vad-status" class="text-xs text-gray-400 mb-6">
-                    الحالة: متصل
-                </p>
-
+                <h3 id="current-room-name" class="text-xl font-bold mb-1 dark:text-white">اسم الغرفة</h3>
+                <p class="text-sm text-gray-400 mb-2">أنت متصل الآن. المايكروفون نشط.</p>
+                <p id="vad-status" class="text-xs text-gray-400 mb-6">الحالة: متصل</p>
                 <div class="flex justify-center gap-4 mb-6">
-                    <button
-                        onclick="toggleMute()"
-                        id="btn-mute"
-                        class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition dark:text-white"
-                        aria-label="كتم الميكروفون"
-                    >
+                    <button onclick="toggleMute()" id="btn-mute" class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition dark:text-white" aria-label="كتم الميكروفون">
                         <i class="fas fa-microphone"></i>
                     </button>
-
-                    <button
-                        onclick="toggleRoom()"
-                        class="w-14 h-14 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-xl hover:bg-red-500/20 transition"
-                        aria-label="مغادرة الغرفة"
-                    >
+                    <button onclick="toggleRoom()" class="w-14 h-14 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-xl hover:bg-red-500/20 transition" aria-label="مغادرة الغرفة">
                         <i class="fas fa-phone-slash"></i>
                     </button>
                 </div>
-
                 <div class="text-right">
                     <div class="flex items-center justify-between mb-2">
-                        <p class="text-xs text-gray-400 font-bold">
-                            المشاركون في الغرفة:
-                        </p>
-                        <span id="peer-count" class="text-xs text-gray-400">
-                            الأشخاص: 0
-                        </span>
+                        <p class="text-xs text-gray-400 font-bold">المشاركون في الغرفة:</p>
+                        <span id="peer-count" class="text-xs text-gray-400">الأشخاص: 0</span>
                     </div>
-                    <div
-                        id="peers-list"
-                        class="space-y-2 text-sm text-gray-600 dark:text-gray-300"
-                    ></div>
+                    <div id="peers-list" class="space-y-2 text-sm text-gray-600 dark:text-gray-300"></div>
                 </div>
             </div>
-
         </div>
-
     </main>
 
-    <!-- REPLY MODAL -->
-    <div
-        id="reply-modal"
-        class="hidden fixed inset-0 z-[80] modal-overlay flex items-end sm:items-center justify-center p-4"
-    >
+    <!-- Profile Modal -->
+    <div id="profile-modal" class="hidden fixed inset-0 z-[80] modal-overlay flex items-end sm:items-center justify-center p-4">
         <div class="bg-white dark:bg-surface w-full max-w-md rounded-2xl shadow-2xl p-5 border border-gray-200 dark:border-gray-700 fade-in">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="font-bold dark:text-white">كتابة رد</h3>
-                <button
-                    onclick="closeReplyModal()"
-                    class="w-8 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center"
-                >
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="font-bold text-lg dark:text-white">الملف الشخصي</h3>
+                <button onclick="closeProfileModal()" class="w-8 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center">
                     <i class="fas fa-times text-gray-500"></i>
                 </button>
             </div>
+            <div class="flex justify-center mb-4">
+                <div class="w-20 h-20 rounded-full bg-indigo-500 overflow-hidden flex items-center justify-center text-white text-2xl font-black">
+                    <img id="profile-preview-img" class="hidden w-full h-full object-cover" alt="">
+                    <span id="profile-preview-letter">P</span>
+                </div>
+            </div>
+            <label class="block text-xs text-gray-500 mb-1">الاسم المعروض</label>
+            <input id="profile-name" type="text" maxlength="50" placeholder="اسمك"
+                class="w-full mb-3 px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 outline-none focus:ring-2 focus:ring-accent dark:text-white text-sm">
+            <label class="block text-xs text-gray-500 mb-1">رابط الصورة</label>
+            <input id="profile-picture" type="url" placeholder="https://..." oninput="previewProfilePicture()"
+                class="w-full mb-3 px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 outline-none focus:ring-2 focus:ring-accent dark:text-white text-sm">
+            <label class="block text-xs text-gray-500 mb-1">نبذة</label>
+            <textarea id="profile-about" rows="3" maxlength="250" placeholder="عرّف بنفسك..."
+                class="w-full mb-4 px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 outline-none focus:ring-2 focus:ring-accent dark:text-white text-sm resize-none"></textarea>
+            <button onclick="saveProfile()" class="w-full bg-accent hover:bg-orange-600 text-white font-bold py-3 rounded-xl transition">حفظ ونشر على Nostr</button>
+            <p class="text-[11px] text-gray-400 mt-3 text-center">يُنشر كـ kind 0 على الشبكة اللامركزية</p>
+        </div>
+    </div>
 
-            <textarea
-                id="reply-input"
-                rows="4"
-                placeholder="اكتب ردك هنا..."
-                class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm resize-none outline-none focus:ring-2 focus:ring-accent dark:text-white"
-            ></textarea>
-
+    <!-- Reply Modal -->
+    <div id="reply-modal" class="hidden fixed inset-0 z-[80] modal-overlay flex items-end sm:items-center justify-center p-4">
+        <div class="bg-white dark:bg-surface w-full max-w-md rounded-2xl shadow-2xl p-5 border border-gray-200 dark:border-gray-700 fade-in">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="font-bold dark:text-white">كتابة رد</h3>
+                <button onclick="closeReplyModal()" class="w-8 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center">
+                    <i class="fas fa-times text-gray-500"></i>
+                </button>
+            </div>
+            <textarea id="reply-input" rows="4" placeholder="اكتب ردك هنا..."
+                class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm resize-none outline-none focus:ring-2 focus:ring-accent dark:text-white"></textarea>
             <div class="flex justify-end gap-2 mt-4">
-                <button
-                    onclick="closeReplyModal()"
-                    class="px-4 py-2 rounded-xl text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
-                >
-                    إلغاء
-                </button>
-                <button
-                    onclick="confirmReply()"
-                    class="px-5 py-2 rounded-xl text-sm font-bold bg-accent text-white hover:bg-orange-600 transition"
-                >
-                    إرسال الرد
-                </button>
+                <button onclick="closeReplyModal()" class="px-4 py-2 rounded-xl text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition">إلغاء</button>
+                <button onclick="confirmReply()" class="px-5 py-2 rounded-xl text-sm font-bold bg-accent text-white hover:bg-orange-600 transition">إرسال الرد</button>
             </div>
         </div>
     </div>
 
-    <!-- BOTTOM NAV -->
     <nav class="fixed bottom-0 w-full glass border-t border-gray-200 dark:border-gray-800 z-50 pb-safe">
         <div class="max-w-2xl mx-auto flex justify-around py-3">
-
-            <button
-                onclick="switchView('timeline')"
-                id="nav-timeline"
-                class="nav-btn active flex flex-col items-center gap-1 text-accent transition"
-            >
+            <button onclick="switchView('timeline')" id="nav-timeline" class="nav-btn active flex flex-col items-center gap-1 text-accent transition">
                 <i class="fas fa-home text-xl"></i>
                 <span class="text-xs font-bold">الرئيسية</span>
             </button>
-
-            <button
-                onclick="switchView('rooms')"
-                id="nav-rooms"
-                class="nav-btn flex flex-col items-center gap-1 text-gray-400 hover:text-accent transition"
-            >
+            <button onclick="switchView('rooms')" id="nav-rooms" class="nav-btn flex flex-col items-center gap-1 text-gray-400 hover:text-accent transition">
                 <i class="fas fa-microphone-lines text-xl"></i>
                 <span class="text-xs font-bold">غرف صوتية</span>
             </button>
-
         </div>
     </nav>
 
-    <!-- Toast -->
-    <div
-        id="toast"
-        class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-dark text-white px-6 py-3 rounded-full shadow-xl z-[100] hidden transition-all duration-300 flex items-center gap-2 text-sm"
-    >
+    <div id="toast" class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-dark text-white px-6 py-3 rounded-full shadow-xl z-[100] hidden transition-all duration-300 flex items-center gap-2 text-sm">
         <i id="toast-icon" class="fas fa-check-circle text-green-400"></i>
         <span id="toast-msg">تم بنجاح</span>
     </div>
-
     <div id="audio-container" aria-hidden="true"></div>
-
     <script src="./app.js"></script>
-
 </body>
 </html>
