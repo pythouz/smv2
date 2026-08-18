@@ -328,8 +328,443 @@ function copyNpub() {
 }
 
 /* =========================================================
-   Profiles (kind 0)
+   Profile editor — Twitter-style (kind 0 + image upload)
+   الصور بترفع على nostr.build وترجع رابط خفيف (مش base64)
+   يتحفظ جوه الحدث.
    ========================================================= */
+
+let myProfile = {
+    name: '',
+    picture: '',
+    banner: '',
+    about: '',
+    location: '',
+    website: ''
+};
+
+// مسودات الصور قبل الحفظ (لسه ما اترفعتش)
+let pendingAvatarFile = null;
+let pendingBannerFile = null;
+let pendingAvatarPreviewUrl = null;
+let pendingBannerPreviewUrl = null;
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+function revokePreview(url) {
+    if (url && String(url).startsWith('blob:')) {
+        try { URL.revokeObjectURL(url); } catch (e) {}
+    }
+}
+
+function validateImageFile(file) {
+    if (!file) return 'لم يتم اختيار ملف';
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+        return 'صيغة غير مدعومة. استخدم JPG أو PNG أو WebP أو GIF';
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+        return 'حجم الصورة كبير (الحد الأقصى 5MB)';
+    }
+    return null;
+}
+
+async function compressImage(file, maxWidth, quality) {
+    // ضغط بسيط في المتصفح قبل الرفع لتقليل الحجم وسرعة النشر
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(file);
+        img.onload = () => {
+            try {
+                const scale = Math.min(1, maxWidth / img.width);
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+                canvas.toBlob(
+                    blob => {
+                        URL.revokeObjectURL(objectUrl);
+                        if (!blob) {
+                            reject(new Error('فشل ضغط الصورة'));
+                            return;
+                        }
+                        resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+                    },
+                    'image/jpeg',
+                    quality
+                );
+            } catch (e) {
+                URL.revokeObjectURL(objectUrl);
+                reject(e);
+            }
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('تعذر قراءة الصورة'));
+        };
+        img.src = objectUrl;
+    });
+}
+
+async function uploadImageToNostrBuild(file) {
+    const form = new FormData();
+    form.append('file[]', file);
+
+    const res = await fetch('https://nostr.build/api/v2/upload/files', {
+        method: 'POST',
+        body: form
+    });
+
+    if (!res.ok) {
+        throw new Error('فشل رفع الصورة (' + res.status + ')');
+    }
+
+    const data = await res.json();
+    // أشكال استجابة شائعة من nostr.build (بتختلف حسب الإصدار)
+    const item = Array.isArray(data) ? data[0] : (data?.data?.[0] || data?.[0] || data);
+    const url =
+        item?.url ||
+        item?.nip94_event?.tags?.find(t => t[0] === 'url')?.[1] ||
+        item?.data?.url ||
+        null;
+
+    if (!url || typeof url !== 'string') {
+        throw new Error('لم يُرجع سيرفر الصور رابطًا صالحًا');
+    }
+    return url;
+}
+
+function setUploadStatus(text, isError) {
+    const el = $('profile-upload-status');
+    if (!el) return;
+    if (!text) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+    }
+    el.classList.remove('hidden');
+    el.textContent = text;
+    el.className = 'text-xs text-center ' + (isError ? 'text-red-500' : 'text-gray-400');
+}
+
+function onProfileNameInput() {
+    const val = ($('profile-name')?.value || '');
+    const counter = $('name-count');
+    if (counter) counter.textContent = String(val.length);
+    const letter = $('profile-avatar-letter');
+    if (letter && !myProfile.picture && !pendingAvatarPreviewUrl) {
+        letter.textContent = (val.trim() || 'P').slice(0, 1).toUpperCase();
+    }
+}
+
+function onProfileAboutInput() {
+    const val = ($('profile-about')?.value || '');
+    const counter = $('about-count');
+    if (counter) counter.textContent = String(val.length);
+}
+
+function renderProfileImages() {
+    const avatarImg = $('profile-avatar-img');
+    const avatarLetter = $('profile-avatar-letter');
+    const bannerImg = $('profile-banner-img');
+    const bannerEmpty = $('profile-banner-empty');
+    const removeBannerBtn = $('btn-remove-banner');
+
+    const avatarSrc = pendingAvatarPreviewUrl || myProfile.picture || '';
+    if (avatarImg && avatarLetter) {
+        if (avatarSrc) {
+            avatarImg.src = avatarSrc;
+            avatarImg.classList.remove('hidden');
+            avatarLetter.classList.add('hidden');
+        } else {
+            avatarImg.classList.add('hidden');
+            avatarLetter.classList.remove('hidden');
+            avatarLetter.textContent = (myProfile.name || 'P').slice(0, 1).toUpperCase();
+        }
+    }
+
+    const bannerSrc = pendingBannerPreviewUrl || myProfile.banner || '';
+    if (bannerImg && bannerEmpty) {
+        if (bannerSrc) {
+            bannerImg.src = bannerSrc;
+            bannerImg.classList.remove('hidden');
+            bannerEmpty.classList.add('hidden');
+            if (removeBannerBtn) {
+                removeBannerBtn.classList.remove('hidden');
+                removeBannerBtn.classList.add('flex');
+            }
+        } else {
+            bannerImg.classList.add('hidden');
+            bannerEmpty.classList.remove('hidden');
+            if (removeBannerBtn) {
+                removeBannerBtn.classList.add('hidden');
+                removeBannerBtn.classList.remove('flex');
+            }
+        }
+    }
+}
+
+function onAvatarSelected(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    const err = validateImageFile(file);
+    if (err) {
+        showToast(err, 'error');
+        return;
+    }
+
+    revokePreview(pendingAvatarPreviewUrl);
+    pendingAvatarFile = file;
+    pendingAvatarPreviewUrl = URL.createObjectURL(file);
+    renderProfileImages();
+}
+
+function onBannerSelected(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    const err = validateImageFile(file);
+    if (err) {
+        showToast(err, 'error');
+        return;
+    }
+
+    revokePreview(pendingBannerPreviewUrl);
+    pendingBannerFile = file;
+    pendingBannerPreviewUrl = URL.createObjectURL(file);
+    renderProfileImages();
+}
+
+function removeBanner() {
+    pendingBannerFile = null;
+    revokePreview(pendingBannerPreviewUrl);
+    pendingBannerPreviewUrl = null;
+    myProfile.banner = '';
+    renderProfileImages();
+}
+
+function openProfileModal() {
+    const modal = $('profile-modal');
+    if (!modal) return;
+
+    // صفّر مسودات الصور غير المحفوظة
+    pendingAvatarFile = null;
+    pendingBannerFile = null;
+    revokePreview(pendingAvatarPreviewUrl);
+    revokePreview(pendingBannerPreviewUrl);
+    pendingAvatarPreviewUrl = null;
+    pendingBannerPreviewUrl = null;
+
+    if ($('profile-name')) $('profile-name').value = myProfile.name || '';
+    if ($('profile-about')) $('profile-about').value = myProfile.about || '';
+    if ($('profile-location')) $('profile-location').value = myProfile.location || '';
+    if ($('profile-website')) $('profile-website').value = myProfile.website || '';
+
+    onProfileNameInput();
+    onProfileAboutInput();
+    renderProfileImages();
+    setUploadStatus('');
+
+    modal.classList.remove('hidden');
+    $('settings-panel')?.classList.add('hidden');
+}
+
+function closeProfileModal() {
+    $('profile-modal')?.classList.add('hidden');
+    revokePreview(pendingAvatarPreviewUrl);
+    revokePreview(pendingBannerPreviewUrl);
+    pendingAvatarPreviewUrl = null;
+    pendingBannerPreviewUrl = null;
+    pendingAvatarFile = null;
+    pendingBannerFile = null;
+}
+
+async function saveProfile() {
+    if (!pk) {
+        showToast('لا توجد هوية جاهزة بعد', 'error');
+        return;
+    }
+
+    const name = ($('profile-name')?.value || '').trim().slice(0, 50);
+    const about = ($('profile-about')?.value || '').trim().slice(0, 160);
+    const location = ($('profile-location')?.value || '').trim().slice(0, 30);
+    const website = ($('profile-website')?.value || '').trim().slice(0, 100);
+
+    if (!name) {
+        showToast('الاسم مطلوب', 'error');
+        return;
+    }
+
+    if (website && !/^https?:\/\//i.test(website)) {
+        showToast('رابط الموقع لازم يبدأ بـ http:// أو https://', 'error');
+        return;
+    }
+
+    const btn = $('btn-save-profile');
+    if (btn) btn.disabled = true;
+
+    try {
+        let pictureUrl = myProfile.picture || '';
+        let bannerUrl = myProfile.banner || '';
+
+        if (pendingAvatarFile) {
+            setUploadStatus('جاري رفع الصورة الشخصية...');
+            const compressed = await compressImage(pendingAvatarFile, 400, 0.85);
+            pictureUrl = await uploadImageToNostrBuild(compressed);
+        }
+
+        if (pendingBannerFile) {
+            setUploadStatus('جاري رفع صورة الغلاف...');
+            const compressed = await compressImage(pendingBannerFile, 1500, 0.82);
+            bannerUrl = await uploadImageToNostrBuild(compressed);
+        }
+
+        setUploadStatus('جاري حفظ الملف على Nostr...');
+
+        const contentObj = {
+            name,
+            display_name: name,
+            about: about || undefined,
+            picture: pictureUrl || undefined,
+            banner: bannerUrl || undefined,
+            location: location || undefined,
+            website: website || undefined
+        };
+
+        // تنظيف المفاتيح الفارغة قبل التحويل لـ JSON
+        Object.keys(contentObj).forEach(k => {
+            if (contentObj[k] === undefined || contentObj[k] === '') delete contentObj[k];
+        });
+
+        const signedEvent = await signEvent({
+            kind: 0,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [],
+            content: JSON.stringify(contentObj)
+        });
+
+        await pool.publish(RELAYS, signedEvent);
+
+        myProfile = { name, about, picture: pictureUrl, banner: bannerUrl, location, website };
+
+        profileCache.set(pk, {
+            name,
+            picture: pictureUrl || null,
+            about: about || null
+        });
+
+        pendingAvatarFile = null;
+        pendingBannerFile = null;
+        revokePreview(pendingAvatarPreviewUrl);
+        revokePreview(pendingBannerPreviewUrl);
+        pendingAvatarPreviewUrl = null;
+        pendingBannerPreviewUrl = null;
+
+        updateHeaderAvatar();
+        updateAvatarsInDom(pk);
+        closeProfileModal();
+        showToast('تم تحديث الملف الشخصي ✅', 'success');
+    } catch (error) {
+        console.error('[Profile] فشل الحفظ:', error);
+        setUploadStatus(getErrorMessage(error), true);
+        showToast('فشل الحفظ: ' + getErrorMessage(error), 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function loadMyProfile() {
+    if (!pk) return;
+    try {
+        pool.subscribeMany(
+            RELAYS,
+            [{ kinds: [0], authors: [pk], limit: 1 }],
+            {
+                onevent: event => {
+                    try {
+                        const meta = JSON.parse(event.content || '{}');
+                        myProfile = {
+                            name: meta.display_name || meta.name || '',
+                            picture: meta.picture || '',
+                            banner: meta.banner || '',
+                            about: meta.about || '',
+                            location: meta.location || '',
+                            website: meta.website || meta.url || ''
+                        };
+                        profileCache.set(pk, {
+                            name: myProfile.name || null,
+                            picture: myProfile.picture || null,
+                            about: myProfile.about || null
+                        });
+                        updateHeaderAvatar();
+                        updateAvatarsInDom(pk);
+                    } catch (e) {}
+                },
+                oneose: () => {}
+            }
+        );
+    } catch (error) {
+        console.warn('[Profile] فشل تحميل ملفي الشخصي:', error);
+    }
+}
+
+// أفاتار مستدير: بيرجع HTML لصورة لو موجودة، وإلا حروف بدل ما تفضل فاضية
+function avatarHtml(pubkey, sizeClass) {
+    const profile = profileCache.get(pubkey);
+    const fallback = (pubkey || '؟').slice(0, 2).toUpperCase();
+
+    if (profile?.picture) {
+        return `<div class="avatar ${sizeClass} bg-indigo-500 overflow-hidden p-0">
+            <img src="${escapeHtml(profile.picture)}" alt="" class="w-full h-full object-cover"
+                 onerror="this.parentElement.textContent='${escapeHtml(fallback)}'">
+        </div>`;
+    }
+
+    return `<div class="avatar ${sizeClass} bg-indigo-500">${escapeHtml(fallback)}</div>`;
+}
+
+// تحديث كل الأماكن اللي بتعرض صورة/اسم صاحب المفتاح ده بعد تغييره
+function updateAvatarsInDom(pubkey) {
+    const profile = profileCache.get(pubkey);
+    const displayName = getDisplayName(pubkey);
+
+    document.querySelectorAll(`.post-card[data-author="${pubkey}"]`).forEach(card => {
+        const nameEl = card.querySelector('.author-name');
+        if (nameEl && profile?.name) nameEl.textContent = displayName;
+
+        const slot = card.querySelector('.avatar-slot');
+        if (slot) slot.innerHTML = avatarHtml(pubkey, 'w-10 h-10 text-sm');
+    });
+
+    document.querySelectorAll(`.participant-avatar[data-pubkey="${pubkey}"]`).forEach(slot => {
+        slot.innerHTML = avatarHtml(pubkey, 'w-12 h-12 text-sm');
+    });
+
+    if (pubkey === pk) {
+        updateHeaderAvatar();
+    }
+}
+
+function updateHeaderAvatar() {
+    const img = $('header-avatar-img');
+    const fb = $('header-avatar-fallback');
+    if (!img || !fb) return;
+
+    if (myProfile.picture) {
+        img.src = myProfile.picture;
+        img.classList.remove('hidden');
+        fb.classList.add('hidden');
+    } else {
+        img.classList.add('hidden');
+        fb.classList.remove('hidden');
+        fb.textContent = (myProfile.name || pk || 'P').slice(0, 1).toUpperCase();
+    }
+}
 
 function fetchProfiles(pubkeys) {
     const needed = pubkeys.filter(p => p && !profileCache.has(p));
@@ -345,12 +780,10 @@ function fetchProfiles(pubkeys) {
                         const meta = JSON.parse(event.content || '{}');
                         profileCache.set(event.pubkey, {
                             name: meta.display_name || meta.name || null,
-                            picture: meta.picture || null
+                            picture: meta.picture || null,
+                            about: meta.about || null
                         });
-                        document.querySelectorAll(`.post-card[data-author="${event.pubkey}"]`).forEach(card => {
-                            const nameEl = card.querySelector('.author-name');
-                            if (nameEl) nameEl.textContent = getDisplayName(event.pubkey);
-                        });
+                        updateAvatarsInDom(event.pubkey);
                     } catch (e) {}
                 },
                 oneose: () => {}
@@ -439,8 +872,8 @@ function renderPost(event) {
     div.innerHTML = `
         <div class="flex justify-between items-start mb-3">
             <div class="flex items-center gap-3">
-                <div class="avatar w-10 h-10 bg-indigo-500 text-sm">
-                    ${escapeHtml(event.pubkey.slice(0, 2).toUpperCase())}
+                <div class="avatar-slot">
+                    ${avatarHtml(event.pubkey, 'w-10 h-10 text-sm')}
                 </div>
                 <div>
                     <div class="author-name font-bold text-sm dark:text-white">
@@ -1538,6 +1971,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     await initIdentity();
+    loadMyProfile();
     startFeed();
     startRoomDirectory();
 
@@ -1575,4 +2009,12 @@ window.toggleSettings = toggleSettings;
 window.exportKey = exportKey;
 window.importKey = importKey;
 window.copyNpub = copyNpub;
+window.openProfileModal = openProfileModal;
+window.closeProfileModal = closeProfileModal;
+window.saveProfile = saveProfile;
+window.onAvatarSelected = onAvatarSelected;
+window.onBannerSelected = onBannerSelected;
+window.removeBanner = removeBanner;
+window.onProfileNameInput = onProfileNameInput;
+window.onProfileAboutInput = onProfileAboutInput;
 window.showToast = showToast;
