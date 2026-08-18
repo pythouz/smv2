@@ -300,7 +300,6 @@ function validateImageFile(file) {
 }
 
 async function compressImage(file, maxWidth, quality) {
-    // ضغط بسيط في المتصفح قبل الرفع
     return new Promise((resolve, reject) => {
         const img = new Image();
         const objectUrl = URL.createObjectURL(file);
@@ -336,32 +335,34 @@ async function compressImage(file, maxWidth, quality) {
     });
 }
 
-async function uploadImageToNostrBuild(file) {
-    const form = new FormData();
-    form.append('file[]', file);
+// دالة الرفع الجديدة باستخدام void.cat (بديلة عن nostr.build)
+async function uploadImageToVoidCat(file) {
+    // حساب SHA-256 للملف (مطلوب من void.cat)
+    const arrayBuffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-    const res = await fetch('https://nostr.build/api/v2/upload/files', {
+    const res = await fetch('https://void.cat/upload?cli=true', {
         method: 'POST',
-        body: form
+        headers: {
+            'V-Content-Type': file.type || 'application/octet-stream',
+            'V-Full-Digest': `sha256:${hashHex}`,
+            'V-Filename': file.name || 'image.jpg'
+        },
+        body: file
     });
 
     if (!res.ok) {
         throw new Error('فشل رفع الصورة (' + res.status + ')');
     }
 
-    const data = await res.json();
-    // أشكال استجابة شائعة من nostr.build
-    const item = Array.isArray(data) ? data[0] : (data?.data?.[0] || data?.[0] || data);
-    const url =
-        item?.url ||
-        item?.nip94_event?.tags?.find(t => t[0] === 'url')?.[1] ||
-        item?.data?.url ||
-        null;
-
-    if (!url || typeof url !== 'string') {
+    // void.cat يرجع الرابط المباشر كنص عادي عند استخدام ?cli=true
+    const url = await res.text();
+    if (!url || !url.startsWith('https://')) {
         throw new Error('لم يُرجع سيرفر الصور رابطًا صالحًا');
     }
-    return url;
+    return url.trim();
 }
 
 function setUploadStatus(text, isError) {
@@ -480,7 +481,6 @@ function openProfileModal() {
     const modal = $('profile-modal');
     if (!modal) return;
 
-    // صفّر مسودات الملفات
     pendingAvatarFile = null;
     pendingBannerFile = null;
     revokePreview(pendingAvatarPreviewUrl);
@@ -533,13 +533,15 @@ async function saveProfile() {
         if (pendingAvatarFile) {
             setUploadStatus('جاري رفع الصورة الشخصية...');
             const compressed = await compressImage(pendingAvatarFile, 400, 0.85);
-            pictureUrl = await uploadImageToNostrBuild(compressed);
+            // تم التغيير هنا لاستخدام الدالة الجديدة
+            pictureUrl = await uploadImageToVoidCat(compressed);
         }
 
         if (pendingBannerFile) {
             setUploadStatus('جاري رفع صورة الغلاف...');
             const compressed = await compressImage(pendingBannerFile, 1500, 0.82);
-            bannerUrl = await uploadImageToNostrBuild(compressed);
+            // تم التغيير هنا لاستخدام الدالة الجديدة
+            bannerUrl = await uploadImageToVoidCat(compressed);
         }
 
         setUploadStatus('جاري حفظ الملف على Nostr...');
@@ -554,7 +556,6 @@ async function saveProfile() {
             website: website || undefined
         };
 
-        // تنظيف المفاتيح الفارغة
         Object.keys(contentObj).forEach(k => {
             if (contentObj[k] === undefined || contentObj[k] === '') delete contentObj[k];
         });
@@ -569,7 +570,6 @@ async function saveProfile() {
         await Promise.any(
             RELAYS.map(r => pool.publish([r], signed).catch(e => Promise.reject(e)))
         ).catch(async () => {
-            // لو Promise.any مش مدعوم أو فشل الكل
             await pool.publish(RELAYS, signed);
         });
 
@@ -664,7 +664,6 @@ window.onBannerSelected = onBannerSelected;
 window.removeBanner = removeBanner;
 window.onProfileNameInput = onProfileNameInput;
 window.onProfileAboutInput = onProfileAboutInput;
-
 /* =========================================================
 المنشورات
 ========================================================= */
