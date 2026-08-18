@@ -1,6 +1,6 @@
 /* =========================================================
-   Pulse - التطبيق الرئيسي
-   Nostr + منشورات + غرف صوت WebRTC + بروفايل + اكتشاف غرف
+   Pulse - التطبيق الرئيسي (نسخة محسّنة)
+   نظام Nostr + المنشورات + غرف الصوت WebRTC
    ========================================================= */
 
 const RELAYS = [
@@ -15,7 +15,10 @@ const ROOM_EVENT_KIND = 20000;
 const MAX_SEEN_EVENTS = 2000;
 const MAX_RENDERED_POSTS = 80;
 const MAX_PROCESSED_LIKES = 1500;
+
+// اكتشاف الغرف الحية: تاج عام يُضاف لكل حدث حضور، بغض النظر عن اسم الغرفة
 const DISCOVERY_TAG = APP_TAG + ':room-directory';
+// أي حضور أقدم من كده يعتبر منتهي (المستخدم غادر الغرفة أو قفل التبويب)
 const ROOM_PRESENCE_TTL_MS = 90 * 1000;
 
 /* =========================================================
@@ -28,32 +31,39 @@ let npub = null;
 let usingNip07 = false;
 
 const storageKey = 'pulse_nsec_hex';
+
 const pool = new NostrTools.SimplePool();
 
 const seenEvents = new Set();
 const renderedPosts = new Map();
 const profileCache = new Map();
-let myProfile = { name: '', picture: '', about: '' };
 
 let postsSubscription = null;
 let reactionsSubscription = null;
 
+// اكتشاف الغرف: roomName -> Map(pubkey -> { peerId, lastSeen })
 const discoveredRooms = new Map();
 let directorySubscription = null;
 let directoryCleanupInterval = null;
 
 let localStream = null;
 let peer = null;
+
 let currentRoom = null;
 let roomSubscription = null;
+
 let myPeerId = null;
+
 let activeCalls = new Map();
 let announcedPeers = new Set();
+
 let isMuted = false;
 let isJoiningRoom = false;
+
 let bgAudioContext = null;
 let silentAudioElement = null;
 let wakeLock = null;
+
 const processedLikes = new Set();
 
 /* =========================================================
@@ -92,7 +102,9 @@ function limitSet(set, max) {
     if (set.size <= max) return;
     const arr = Array.from(set);
     const removeCount = set.size - max;
-    for (let i = 0; i < removeCount; i++) set.delete(arr[i]);
+    for (let i = 0; i < removeCount; i++) {
+        set.delete(arr[i]);
+    }
 }
 
 function limitMap(map, max) {
@@ -108,17 +120,10 @@ function limitMap(map, max) {
 
 function getDisplayName(pubkey) {
     const cached = profileCache.get(pubkey);
-    if (cached && cached.name) return cached.name.slice(0, 24);
-    return (pubkey || '').slice(0, 8) + '...';
-}
-
-function getAvatarHtml(pubkey, sizeClass = 'w-10 h-10') {
-    const c = profileCache.get(pubkey);
-    const letter = (c?.name || pubkey || '?').slice(0, 1).toUpperCase();
-    if (c?.picture) {
-        return `<img src="${escapeHtml(c.picture)}" alt="" class="avatar ${sizeClass} object-cover" onerror="this.outerHTML='<div class=\\'avatar ${sizeClass} bg-indigo-500 text-sm\\'>${escapeHtml(letter)}</div>'">`;
+    if (cached && cached.name) {
+        return cached.name.slice(0, 24);
     }
-    return `<div class="avatar ${sizeClass} bg-indigo-500 text-sm">${escapeHtml(letter)}</div>`;
+    return pubkey.slice(0, 8) + '...';
 }
 
 /* =========================================================
@@ -137,13 +142,19 @@ function showToast(message, type = 'success') {
 
     msg.textContent = message;
 
-    if (type === 'error') icon.className = 'fas fa-exclamation-circle text-red-400';
-    else if (type === 'info') icon.className = 'fas fa-info-circle text-blue-400';
-    else icon.className = 'fas fa-check-circle text-green-400';
+    if (type === 'error') {
+        icon.className = 'fas fa-exclamation-circle text-red-400';
+    } else if (type === 'info') {
+        icon.className = 'fas fa-info-circle text-blue-400';
+    } else {
+        icon.className = 'fas fa-check-circle text-green-400';
+    }
 
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
+    toast._timer = setTimeout(() => {
+        toast.classList.add('hidden');
+    }, 3500);
 }
 
 /* =========================================================
@@ -159,21 +170,23 @@ async function initIdentity() {
                 usingNip07 = true;
                 secretKeyHex = null;
                 updateIdentityUI();
-                console.log('[Nostr] NIP-07');
+                console.log('[Nostr] تم استخدام NIP-07');
                 showToast('تم الاتصال بامتداد Nostr (NIP-07)', 'success');
                 return;
             } catch (nip07Error) {
-                console.warn('[Nostr] NIP-07 فشل:', nip07Error);
+                console.warn('[Nostr] NIP-07 فشل، الانتقال للمفتاح المحلي:', nip07Error);
             }
         }
 
         let hexSk = localStorage.getItem(storageKey);
+
         const isValidHex =
             typeof hexSk === 'string' &&
             hexSk.length === 64 &&
             /^[0-9a-fA-F]{64}$/.test(hexSk);
 
         if (!isValidHex) {
+            console.log('[Nostr] إنشاء هوية جديدة');
             const generated = NostrTools.generateSecretKey();
             hexSk = Array.from(generated)
                 .map(byte => byte.toString(16).padStart(2, '0'))
@@ -186,10 +199,11 @@ async function initIdentity() {
         pk = NostrTools.getPublicKey(secretKeyHex);
         npub = NostrTools.nip19.npubEncode(pk);
         usingNip07 = false;
+
         updateIdentityUI();
-        console.log('[Nostr] هوية محلية جاهزة');
+        console.log('[Nostr] الهوية جاهزة (محلية)');
     } catch (error) {
-        console.error('[Nostr] فشل الهوية:', error);
+        console.error('[Nostr] فشل تهيئة الهوية:', error);
         localStorage.removeItem(storageKey);
         showToast('حدث خطأ في الهوية، سيتم إنشاء هوية جديدة', 'error');
         setTimeout(initIdentity, 800);
@@ -220,7 +234,9 @@ async function signEvent(eventTemplate) {
     if (usingNip07 && window.nostr && window.nostr.signEvent) {
         return await window.nostr.signEvent(eventTemplate);
     }
-    if (!secretKeyHex) throw new Error('لا يوجد مفتاح توقيع متاح');
+    if (!secretKeyHex) {
+        throw new Error('لا يوجد مفتاح توقيع متاح');
+    }
     return NostrTools.finalizeEvent(eventTemplate, secretKeyHex);
 }
 
@@ -239,12 +255,15 @@ function exportKey() {
         );
         if (navigator.clipboard) {
             navigator.clipboard.writeText(nsec).then(() => {
-                showToast('تم نسخ المفتاح الخاص. احفظه في مكان آمن!', 'success');
-            }).catch(() => prompt('انسخ مفتاحك الخاص واحفظه:', nsec));
+                showToast('تم نسخ المفتاح الخاص (nsec). احفظه في مكان آمن!', 'success');
+            }).catch(() => {
+                prompt('انسخ مفتاحك الخاص واحفظه:', nsec);
+            });
         } else {
             prompt('انسخ مفتاحك الخاص واحفظه:', nsec);
         }
     } catch (error) {
+        console.error('[Key] تصدير فشل:', error);
         prompt('انسخ المفتاح (hex):', secretKeyHex);
     }
 }
@@ -264,7 +283,8 @@ function importKey() {
         if (hex.startsWith('nsec1')) {
             const decoded = NostrTools.nip19.decode(hex);
             if (decoded.type !== 'nsec') throw new Error('نوع غير صحيح');
-            hex = Array.from(decoded.data).map(b => b.toString(16).padStart(2, '0')).join('');
+            const bytes = decoded.data;
+            hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
         if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
@@ -278,7 +298,6 @@ function importKey() {
         usingNip07 = false;
 
         updateIdentityUI();
-        loadMyProfile();
         showToast('تم استيراد المفتاح بنجاح', 'success');
 
         if (postsSubscription) {
@@ -290,6 +309,7 @@ function importKey() {
         if (container) container.innerHTML = '';
         startFeed();
     } catch (error) {
+        console.error('[Key] استيراد فشل:', error);
         showToast('فشل استيراد المفتاح: ' + getErrorMessage(error), 'error');
     }
 }
@@ -299,7 +319,9 @@ function copyNpub() {
     if (navigator.clipboard) {
         navigator.clipboard.writeText(npub).then(() => {
             showToast('تم نسخ npub', 'success');
-        }).catch(() => prompt('انسخ npub:', npub));
+        }).catch(() => {
+            prompt('انسخ npub:', npub);
+        });
     } else {
         prompt('انسخ npub:', npub);
     }
@@ -310,7 +332,7 @@ function copyNpub() {
    ========================================================= */
 
 function fetchProfiles(pubkeys) {
-    const needed = [...new Set(pubkeys)].filter(p => p && !profileCache.has(p));
+    const needed = pubkeys.filter(p => p && !profileCache.has(p));
     if (!needed.length) return;
 
     try {
@@ -323,145 +345,19 @@ function fetchProfiles(pubkeys) {
                         const meta = JSON.parse(event.content || '{}');
                         profileCache.set(event.pubkey, {
                             name: meta.display_name || meta.name || null,
-                            picture: meta.picture || null,
-                            about: meta.about || null
+                            picture: meta.picture || null
                         });
-                        updateAvatarsInDom(event.pubkey);
+                        document.querySelectorAll(`.post-card[data-author="${event.pubkey}"]`).forEach(card => {
+                            const nameEl = card.querySelector('.author-name');
+                            if (nameEl) nameEl.textContent = getDisplayName(event.pubkey);
+                        });
                     } catch (e) {}
-                }
+                },
+                oneose: () => {}
             }
         );
     } catch (error) {
-        console.warn('[Profile]', error);
-    }
-}
-
-function updateAvatarsInDom(pubkey) {
-    const name = getDisplayName(pubkey);
-    document.querySelectorAll(`.post-card[data-author="${pubkey}"] .author-name`).forEach(el => {
-        el.textContent = name;
-    });
-    document.querySelectorAll(`.post-card[data-author="${pubkey}"] .author-avatar-wrap`).forEach(el => {
-        el.innerHTML = getAvatarHtml(pubkey, 'w-10 h-10');
-    });
-    if (pubkey === pk) updateHeaderAvatar();
-}
-
-function loadMyProfile() {
-    if (!pk) return;
-    try {
-        pool.subscribeMany(
-            RELAYS,
-            [{ kinds: [0], authors: [pk], limit: 1 }],
-            {
-                onevent: event => {
-                    try {
-                        const meta = JSON.parse(event.content || '{}');
-                        myProfile = {
-                            name: meta.display_name || meta.name || '',
-                            picture: meta.picture || '',
-                            about: meta.about || ''
-                        };
-                        profileCache.set(pk, {
-                            name: myProfile.name || null,
-                            picture: myProfile.picture || null,
-                            about: myProfile.about || null
-                        });
-                        updateHeaderAvatar();
-                    } catch (e) {}
-                }
-            }
-        );
-    } catch (e) {}
-}
-
-function updateHeaderAvatar() {
-    const img = $('header-avatar-img');
-    const fb = $('header-avatar-fallback');
-    if (!img || !fb) return;
-
-    if (myProfile.picture) {
-        img.src = myProfile.picture;
-        img.classList.remove('hidden');
-        fb.classList.add('hidden');
-    } else {
-        img.classList.add('hidden');
-        fb.classList.remove('hidden');
-        fb.textContent = (myProfile.name || 'P').slice(0, 1).toUpperCase();
-    }
-}
-
-function openProfileModal() {
-    const modal = $('profile-modal');
-    if (!modal) return;
-    if ($('profile-name')) $('profile-name').value = myProfile.name || '';
-    if ($('profile-picture')) $('profile-picture').value = myProfile.picture || '';
-    if ($('profile-about')) $('profile-about').value = myProfile.about || '';
-    previewProfilePicture();
-    modal.classList.remove('hidden');
-    $('settings-panel')?.classList.add('hidden');
-}
-
-function closeProfileModal() {
-    $('profile-modal')?.classList.add('hidden');
-}
-
-function previewProfilePicture() {
-    const url = ($('profile-picture')?.value || '').trim();
-    const img = $('profile-preview-img');
-    const letter = $('profile-preview-letter');
-    if (!img || !letter) return;
-
-    if (url) {
-        img.src = url;
-        img.classList.remove('hidden');
-        letter.classList.add('hidden');
-    } else {
-        img.classList.add('hidden');
-        letter.classList.remove('hidden');
-        letter.textContent = (($('profile-name')?.value) || 'P').slice(0, 1).toUpperCase();
-    }
-}
-
-async function saveProfile() {
-    const name = ($('profile-name')?.value || '').trim().slice(0, 50);
-    const picture = ($('profile-picture')?.value || '').trim().slice(0, 500);
-    const about = ($('profile-about')?.value || '').trim().slice(0, 250);
-
-    if (!name) {
-        showToast('اكتب اسمًا على الأقل', 'error');
-        return;
-    }
-
-    try {
-        const content = JSON.stringify({
-            name,
-            display_name: name,
-            ...(picture ? { picture } : {}),
-            ...(about ? { about } : {})
-        });
-
-        const signed = await signEvent({
-            kind: 0,
-            created_at: Math.floor(Date.now() / 1000),
-            tags: [],
-            content
-        });
-
-        await pool.publish(RELAYS, signed);
-
-        myProfile = { name, picture, about };
-        profileCache.set(pk, {
-            name,
-            picture: picture || null,
-            about: about || null
-        });
-        updateHeaderAvatar();
-        updateAvatarsInDom(pk);
-        closeProfileModal();
-        showToast('تم حفظ الملف الشخصي', 'success');
-    } catch (error) {
-        showToast('فشل حفظ البروفايل: ' + getErrorMessage(error), 'error');
+        console.warn('[Profile] فشل جلب الملفات الشخصية:', error);
     }
 }
 
@@ -470,7 +366,8 @@ async function saveProfile() {
    ========================================================= */
 
 function startFeed() {
-    console.log('[Feed] بدء الاشتراك');
+    console.log('[Feed] بدء الاشتراك في المنشورات');
+
     const loading = $('loading-feed');
     if (loading) loading.classList.remove('hidden');
 
@@ -488,18 +385,23 @@ function startFeed() {
                     }
 
                     if (seenEvents.has(event.id)) return;
+
                     seenEvents.add(event.id);
                     limitSet(seenEvents, MAX_SEEN_EVENTS);
                     renderPost(event);
                 },
                 oneose: () => {
+                    console.log('[Feed] تم تحميل المنشورات الأولية');
                     if (loading) loading.classList.add('hidden');
                     startReactionSubscription();
                 },
-                onclose: () => {}
+                onclose: () => {
+                    console.log('[Feed] اشتراك المنشورات أغلق');
+                }
             }
         );
     } catch (error) {
+        console.error('[Feed] خطأ في subscribeMany:', error);
         if (loading) loading.classList.add('hidden');
         showToast('تعذر الاتصال بشبكة المنشورات: ' + getErrorMessage(error), 'error');
     }
@@ -527,6 +429,7 @@ function renderPost(event) {
     });
 
     const displayName = getDisplayName(event.pubkey);
+
     const div = document.createElement('div');
     div.className =
         'post-card bg-white dark:bg-surface rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-800 fade-in';
@@ -536,26 +439,45 @@ function renderPost(event) {
     div.innerHTML = `
         <div class="flex justify-between items-start mb-3">
             <div class="flex items-center gap-3">
-                <div class="author-avatar-wrap">${getAvatarHtml(event.pubkey, 'w-10 h-10')}</div>
+                <div class="avatar w-10 h-10 bg-indigo-500 text-sm">
+                    ${escapeHtml(event.pubkey.slice(0, 2).toUpperCase())}
+                </div>
                 <div>
-                    <div class="author-name font-bold text-sm dark:text-white">${escapeHtml(displayName)}</div>
-                    <div class="text-xs text-gray-400">${escapeHtml(time)}</div>
+                    <div class="author-name font-bold text-sm dark:text-white">
+                        ${escapeHtml(displayName)}
+                    </div>
+                    <div class="text-xs text-gray-400">
+                        ${escapeHtml(time)}
+                    </div>
                 </div>
             </div>
         </div>
-        <p class="post-content text-gray-800 dark:text-gray-200 leading-relaxed mb-4 whitespace-pre-wrap text-sm md:text-base">${escapeHtml(event.content)}</p>
+
+        <p class="post-content text-gray-800 dark:text-gray-200 leading-relaxed mb-4 whitespace-pre-wrap text-sm md:text-base">
+            ${escapeHtml(event.content)}
+        </p>
+
         <div class="flex items-center gap-6 text-gray-400 text-sm border-t border-gray-100 dark:border-gray-800 pt-3">
-            <button class="like-button flex items-center gap-2 hover:text-red-500 transition" onclick="likePost('${event.id}', '${event.pubkey}')" data-liked="false">
+            <button
+                class="like-button flex items-center gap-2 hover:text-red-500 transition"
+                onclick="likePost('${event.id}', '${event.pubkey}')"
+                data-liked="false"
+            >
                 <i class="far fa-heart"></i>
                 <span>إعجاب</span>
                 <span class="like-count" data-count="0">0</span>
             </button>
-            <button class="reply-button flex items-center gap-2 hover:text-blue-500 transition" onclick="replyToPost('${event.id}', '${event.pubkey}')">
+
+            <button
+                class="reply-button flex items-center gap-2 hover:text-blue-500 transition"
+                onclick="replyToPost('${event.id}', '${event.pubkey}')"
+            >
                 <i class="far fa-comment"></i>
                 <span>رد</span>
                 <span class="reply-count" data-count="0">0</span>
             </button>
         </div>
+
         <div class="replies-container mt-3 space-y-2" data-replies="${event.id}"></div>
     `;
 
@@ -564,6 +486,10 @@ function renderPost(event) {
     container.prepend(div);
     fetchProfiles([event.pubkey]);
 }
+
+/* =========================================================
+   نشر منشور
+   ========================================================= */
 
 async function publishPost() {
     const input = $('post-input');
@@ -587,7 +513,7 @@ async function publishPost() {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
             tags: [['t', APP_TAG]],
-            content
+            content: content
         };
 
         const signedEvent = await signEvent(eventTemplate);
@@ -601,12 +527,13 @@ async function publishPost() {
         input.value = '';
         showToast('تم النشر بنجاح', 'success');
     } catch (error) {
+        console.error('[Post] فشل النشر:', error);
         showToast('فشل النشر: ' + getErrorMessage(error), 'error');
     }
 }
 
 /* =========================================================
-   إعجابات وردود
+   الإعجابات والردود
    ========================================================= */
 
 function getReactionStats(postId) {
@@ -657,7 +584,7 @@ async function likePost(targetId, targetPubkey) {
     setTimeout(() => stats.likeButton.classList.remove('scale-110'), 180);
 
     try {
-        const signedEvent = await signEvent({
+        const eventTemplate = {
             kind: 7,
             created_at: Math.floor(Date.now() / 1000),
             tags: [
@@ -665,10 +592,13 @@ async function likePost(targetId, targetPubkey) {
                 ['p', targetPubkey]
             ],
             content: '+'
-        });
+        };
+
+        const signedEvent = await signEvent(eventTemplate);
         await pool.publish(RELAYS, signedEvent);
         showToast('تم الإعجاب ❤️', 'success');
     } catch (error) {
+        console.error('[Like] فشل:', error);
         updateLikeUI(targetId, false, -1);
         showToast('فشل إرسال الإعجاب: ' + getErrorMessage(error), 'error');
     }
@@ -691,11 +621,12 @@ function startReactionSubscription() {
                     if (!event || !event.id) return;
                     if (event.kind === 7) handleIncomingLike(event);
                     if (event.kind === 1) handleIncomingReply(event);
-                }
+                },
+                oneose: () => console.log('[Reactions] تم التحميل')
             }
         );
     } catch (error) {
-        console.error('[Reactions]', error);
+        console.error('[Reactions] خطأ:', error);
     }
 }
 
@@ -742,13 +673,8 @@ function handleIncomingReply(event) {
     reply.dataset.replyId = event.id;
     reply.className = 'bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-sm';
     reply.innerHTML = `
-        <div class="flex items-start gap-2">
-            <div class="shrink-0">${getAvatarHtml(event.pubkey, 'w-7 h-7')}</div>
-            <div>
-                <div class="text-xs text-gray-400 mb-0.5">${escapeHtml(getDisplayName(event.pubkey))}</div>
-                <div class="text-gray-700 dark:text-gray-200">${escapeHtml(event.content)}</div>
-            </div>
-        </div>
+        <div class="text-xs text-gray-400 mb-1">${escapeHtml(getDisplayName(event.pubkey))}</div>
+        <div class="text-gray-700 dark:text-gray-200">${escapeHtml(event.content)}</div>
     `;
     repliesContainer.appendChild(reply);
     fetchProfiles([event.pubkey]);
@@ -794,7 +720,7 @@ async function confirmReply() {
 
 async function sendReply(targetId, targetPubkey, cleanContent) {
     try {
-        const signedEvent = await signEvent({
+        const eventTemplate = {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
             tags: [
@@ -803,11 +729,14 @@ async function sendReply(targetId, targetPubkey, cleanContent) {
                 ['t', APP_TAG]
             ],
             content: cleanContent
-        });
+        };
+
+        const signedEvent = await signEvent(eventTemplate);
         handleIncomingReply(signedEvent);
         await pool.publish(RELAYS, signedEvent);
         showToast('تم إرسال الرد', 'success');
     } catch (error) {
+        console.error('[Reply] فشل:', error);
         showToast('فشل إرسال الرد: ' + getErrorMessage(error), 'error');
     }
 }
@@ -906,28 +835,40 @@ function handlePeerError(error) {
 
     if (type === 'network' || type === 'server-error' || type === 'socket-error') {
         showToast('مشكلة في شبكة الاتصال الصوتي: ' + message, 'error');
-    } else if (type === 'unavailable-id') {
-        showToast('معرف الاتصال مستخدم، حاول مرة أخرى', 'error');
-    } else if (type === 'browser-incompatible') {
-        showToast('المتصفح لا يدعم WebRTC', 'error');
-    } else {
-        showToast('خطأ WebRTC: ' + message, 'error');
+        return;
     }
+    if (type === 'unavailable-id') {
+        showToast('معرف الاتصال الصوتي مستخدم، حاول مرة أخرى', 'error');
+        return;
+    }
+    if (type === 'browser-incompatible') {
+        showToast('المتصفح لا يدعم WebRTC بشكل صحيح', 'error');
+        return;
+    }
+    showToast('خطأ WebRTC: ' + message, 'error');
 }
 
-async function toggleRoom() {
+async function toggleRoom(forceLeave = false) {
+    if (forceLeave) {
+        await leaveRoom();
+        return;
+    }
     if (isJoiningRoom) return;
+
     if (currentRoom) {
         await leaveRoom();
         return;
     }
+
     const input = $('room-input');
     if (!input) return;
+
     const roomName = safeRoomName(input.value);
     if (!roomName) {
         showToast('اكتب اسم الغرفة أولاً', 'error');
         return;
     }
+
     await joinRoom(roomName);
 }
 
@@ -936,8 +877,8 @@ async function joinRoom(roomName) {
     isJoiningRoom = true;
 
     try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error('المتصفح لا يدعم الميكروفون أو الصفحة ليست HTTPS');
+        if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error('المتصفح لا يدعم getUserMedia أو الصفحة ليست HTTPS');
         }
 
         showToast('جاري تشغيل الميكروفون...', 'info');
@@ -953,19 +894,21 @@ async function joinRoom(roomName) {
             });
         } catch (micError) {
             if (micError.name === 'NotAllowedError') {
-                throw new Error('تم رفض صلاحية الميكروفون');
+                throw new Error('تم رفض صلاحية الميكروفون. اسمح للمتصفح باستخدام الميكروفون.');
             }
             if (micError.name === 'NotFoundError') {
-                throw new Error('لم يتم العثور على ميكروفون');
+                throw new Error('لم يتم العثور على ميكروفون في الجهاز.');
             }
             if (micError.name === 'NotReadableError') {
-                throw new Error('الميكروفون مستخدم من تطبيق آخر');
+                throw new Error('الميكروفون مستخدم بواسطة تطبيق أو متصفح آخر.');
             }
             throw micError;
         }
 
         await createPeer();
-        if (!peer || peer.destroyed) throw new Error('تعذر إنشاء PeerJS');
+        if (!peer || peer.destroyed) {
+            throw new Error('تعذر إنشاء PeerJS');
+        }
 
         currentRoom = roomName;
         localStorage.setItem('active_room', currentRoom);
@@ -975,7 +918,6 @@ async function joinRoom(roomName) {
         startBackgroundAudioEngine();
         requestSystemLock();
         setupVAD();
-
         await announcePresence();
         listenForPeers();
 
@@ -986,6 +928,7 @@ async function joinRoom(roomName) {
 
         showToast('دخلت غرفة "' + roomName + '" 🎙️', 'success');
     } catch (error) {
+        console.error('[Room] فشل:', error);
         showToast('فشل دخول الغرفة: ' + getErrorMessage(error), 'error');
         cleanupRoomResources(false);
     } finally {
@@ -997,6 +940,7 @@ function updateRoomUI(joined) {
     const btn = $('btn-join-room');
     const input = $('room-input');
     const activeUi = $('active-room-ui');
+
     const directoryUi = $('live-rooms-section');
 
     if (joined) {
@@ -1009,7 +953,7 @@ function updateRoomUI(joined) {
         }
         if (input) input.disabled = true;
         if ($('current-room-name')) {
-            $('current-room-name').textContent = 'غرفة: ' + currentRoom;
+            $('current-room-name').textContent = `غرفة: ${currentRoom}`;
         }
     } else {
         if (activeUi) activeUi.classList.add('hidden');
@@ -1024,31 +968,35 @@ function updateRoomUI(joined) {
 }
 
 function roomTag() {
-    return APP_TAG + ':voice:' + safeRoomName(currentRoom);
+    return `${APP_TAG}:voice:${safeRoomName(currentRoom)}`;
 }
 
 async function announcePresence() {
     if (!currentRoom || !myPeerId) return;
 
+    const tag = roomTag();
+    const eventTemplate = {
+        kind: ROOM_EVENT_KIND,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+            ['t', tag],
+            ['t', DISCOVERY_TAG],
+            ['room', safeRoomName(currentRoom)]
+        ],
+        content: JSON.stringify({
+            peerId: myPeerId,
+            room: safeRoomName(currentRoom),
+            npub: npub,
+            timestamp: Date.now()
+        })
+    };
+
     try {
-        const event = await signEvent({
-            kind: ROOM_EVENT_KIND,
-            created_at: Math.floor(Date.now() / 1000),
-            tags: [
-                ['t', roomTag()],
-                ['t', DISCOVERY_TAG],
-                ['room', safeRoomName(currentRoom)]
-            ],
-            content: JSON.stringify({
-                peerId: myPeerId,
-                room: safeRoomName(currentRoom),
-                npub: npub,
-                timestamp: Date.now()
-            })
-        });
+        const event = await signEvent(eventTemplate);
         await pool.publish(RELAYS, event);
     } catch (error) {
-        showToast('تعذر إعلان وجودك للشبكة', 'error');
+        console.error('[Nostr Room] فشل presence:', error);
+        showToast('تم تشغيل الغرفة لكن تعذر إعلان وجودك للشبكة', 'error');
     }
 }
 
@@ -1059,21 +1007,25 @@ function listenForPeers() {
         try { roomSubscription.close(); } catch (e) {}
     }
 
+    const tag = roomTag();
+
     try {
         roomSubscription = pool.subscribeMany(
             RELAYS,
-            [{ kinds: [ROOM_EVENT_KIND], '#t': [roomTag()], limit: 100 }],
+            [{ kinds: [ROOM_EVENT_KIND], '#t': [tag], limit: 100 }],
             {
-                onevent: event => handleRoomPresence(event)
+                onevent: event => handleRoomPresence(event),
+                oneose: () => {},
+                onclose: () => {}
             }
         );
     } catch (error) {
-        showToast('فشل اكتشاف المشاركين: ' + getErrorMessage(error), 'error');
+        showToast('فشل نظام اكتشاف المشاركين: ' + getErrorMessage(error), 'error');
     }
 }
 
 function handleRoomPresence(event) {
-    if (!currentRoom || !event || !event.content) return;
+    if (!currentRoom || !event?.content) return;
     if (event.pubkey === pk) return;
 
     let data;
@@ -1104,9 +1056,10 @@ function connectToPeer(targetPeerId, displayName) {
         const call = peer.call(targetPeerId, localStream, {
             metadata: { room: currentRoom, caller: myPeerId }
         });
-        if (call) handleCallEvents(call, displayName);
+        if (!call) return;
+        handleCallEvents(call, displayName);
     } catch (error) {
-        showToast('تعذر بدء الاتصال الصوتي', 'error');
+        showToast('تعذر بدء الاتصال الصوتي مع مشارك', 'error');
     }
 }
 
@@ -1119,6 +1072,7 @@ function handleIncomingCall(call) {
         try { call.close(); } catch (e) {}
         return;
     }
+
     try {
         call.answer(localStream);
         handleCallEvents(call, call.peer);
@@ -1145,30 +1099,34 @@ function handleCallEvents(call, displayName) {
 function addPeerAudio(stream, peerId, displayName) {
     if (!stream) return;
 
-    let audio = document.getElementById('audio-' + peerId);
+    let audio = document.getElementById(`audio-${peerId}`);
     if (!audio) {
         audio = document.createElement('audio');
-        audio.id = 'audio-' + peerId;
+        audio.id = `audio-${peerId}`;
         audio.autoplay = true;
         audio.playsInline = true;
         audio.setAttribute('playsinline', '');
         audio.controls = false;
         audio.volume = 1;
-        const container = $('audio-container') || document.body;
-        container.appendChild(audio);
+
+        const container = $('audio-container');
+        if (container) container.appendChild(audio);
+        else document.body.appendChild(audio);
     }
 
     audio.srcObject = stream;
-    audio.play()
-        .then(() => updatePeerCount())
-        .catch(() => {
-            showToast('المتصفح منع الصوت. اضغط داخل الصفحة.', 'error');
-            const unlock = () => {
-                audio.play().catch(() => {});
-                document.removeEventListener('click', unlock);
-            };
-            document.addEventListener('click', unlock);
-        });
+
+    const playPromise = audio.play();
+    if (playPromise) {
+        playPromise
+            .then(() => updatePeerCount())
+            .catch(() => {
+                showToast('المتصفح منع تشغيل الصوت. اضغط داخل الصفحة ثم أعد المحاولة.', 'error');
+                document.addEventListener('click', () => {
+                    audio.play().catch(() => {});
+                }, { once: true });
+            });
+    }
 
     addPeerToUI(peerId, displayName);
     updatePeerCount();
@@ -1177,11 +1135,14 @@ function addPeerAudio(stream, peerId, displayName) {
 function addPeerToUI(peerId, displayName) {
     const list = $('peers-list');
     if (!list) return;
-    if (document.getElementById('participant-' + peerId)) return;
+
+    const id = `participant-${peerId}`;
+    if (document.getElementById(id)) return;
 
     const div = document.createElement('div');
-    div.id = 'participant-' + peerId;
+    div.id = id;
     div.className = 'flex items-center gap-2 bg-gray-50 dark:bg-gray-800 p-2 rounded-lg';
+
     const safeName = String(displayName || peerId).slice(0, 16);
     div.innerHTML = `
         <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
@@ -1191,23 +1152,26 @@ function addPeerToUI(peerId, displayName) {
 }
 
 function removePeerCall(peerId) {
-    const audio = document.getElementById('audio-' + peerId);
+    const audio = document.getElementById(`audio-${peerId}`);
     if (audio) {
         try { audio.pause(); } catch (e) {}
         audio.srcObject = null;
         audio.remove();
     }
-    const item = document.getElementById('participant-' + peerId);
-    if (item) item.remove();
+
+    const participant = document.getElementById(`participant-${peerId}`);
+    if (participant) participant.remove();
+
     activeCalls.delete(peerId);
     updatePeerCount();
 }
 
 function updatePeerCount() {
-    const list = $('peers-list');
-    const count = list ? list.children.length : activeCalls.size;
-    const el = $('peer-count');
-    if (el) el.textContent = 'الأشخاص: ' + count;
+    const count = $('peers-list')?.children.length || activeCalls.size;
+    const countElement = $('peer-count');
+    if (countElement) {
+        countElement.textContent = `الأشخاص: ${count}`;
+    }
 }
 
 function toggleMute() {
@@ -1223,9 +1187,7 @@ function toggleMute() {
     }
 
     isMuted = !isMuted;
-    tracks.forEach(track => {
-        track.enabled = !isMuted;
-    });
+    tracks.forEach(track => { track.enabled = !isMuted; });
 
     const btn = $('btn-mute');
     if (btn) {
@@ -1240,11 +1202,13 @@ function toggleMute() {
 }
 
 /* =========================================================
-   اكتشاف الغرف الحية
+   اكتشاف الغرف الحية (Room Directory)
+   يسمح للمستخدم برؤية الغرف المفتوحة حالياً بدل ما يحتاج
+   يعرف اسمها مسبقاً.
    ========================================================= */
 
 function startRoomDirectory() {
-    if (directorySubscription) return;
+    if (directorySubscription) return; // شغّالة بالفعل
 
     try {
         directorySubscription = pool.subscribeMany(
@@ -1257,7 +1221,7 @@ function startRoomDirectory() {
             }
         );
     } catch (error) {
-        console.warn('[Room Directory]', error);
+        console.warn('[Room Directory] فشل الاشتراك:', error);
     }
 
     if (!directoryCleanupInterval) {
@@ -1269,7 +1233,7 @@ function startRoomDirectory() {
 }
 
 function handleDirectoryPresence(event) {
-    if (!event || !event.content) return;
+    if (!event?.content) return;
 
     let data;
     try {
@@ -1329,9 +1293,7 @@ function renderRoomDirectory() {
 
     if (emptyState) emptyState.classList.add('hidden');
 
-    container.innerHTML = rooms
-        .map(
-            room => `
+    container.innerHTML = rooms.map(room => `
         <button
             onclick="joinDiscoveredRoom('${room.name.replace(/'/g, "\\'")}')"
             class="w-full flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition rounded-xl px-4 py-3 text-right"
@@ -1344,9 +1306,7 @@ function renderRoomDirectory() {
                 <i class="fas fa-user-friends ml-1"></i>${room.count}
             </span>
         </button>
-    `
-        )
-        .join('');
+    `).join('');
 }
 
 function joinDiscoveredRoom(roomName) {
@@ -1384,13 +1344,11 @@ function cleanupRoomResources(destroyPeer = true) {
     });
     activeCalls.clear();
 
-    document
-        .querySelectorAll('#audio-container audio, body > audio[id^="audio-"]')
-        .forEach(audio => {
-            try { audio.pause(); } catch (e) {}
-            audio.srcObject = null;
-            audio.remove();
-        });
+    document.querySelectorAll('#audio-container audio, body > audio[id^="audio-"]').forEach(audio => {
+        try { audio.pause(); } catch (e) {}
+        audio.srcObject = null;
+        audio.remove();
+    });
 
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
@@ -1434,22 +1392,23 @@ function cleanupRoomResources(destroyPeer = true) {
 function startBackgroundAudioEngine() {
     try {
         if (!bgAudioContext) {
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (!AC) return;
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
 
-            bgAudioContext = new AC();
+            bgAudioContext = new AudioContext();
             if (bgAudioContext.state === 'suspended') {
                 bgAudioContext.resume().catch(() => {});
             }
 
-            const osc = bgAudioContext.createOscillator();
+            const oscillator = bgAudioContext.createOscillator();
             const gain = bgAudioContext.createGain();
             gain.gain.value = 0.00001;
-            osc.connect(gain);
+            oscillator.connect(gain);
             gain.connect(bgAudioContext.destination);
-            osc.start();
+            oscillator.start();
 
             silentAudioElement = document.createElement('audio');
+            silentAudioElement.id = 'voice-keepalive';
             silentAudioElement.autoplay = true;
             silentAudioElement.playsInline = true;
             silentAudioElement.muted = true;
@@ -1458,7 +1417,9 @@ function startBackgroundAudioEngine() {
         } else if (bgAudioContext.state === 'suspended') {
             bgAudioContext.resume().catch(() => {});
         }
-    } catch (e) {}
+    } catch (error) {
+        console.error('[Audio] KeepAlive Error:', error);
+    }
 }
 
 async function requestSystemLock() {
@@ -1466,17 +1427,17 @@ async function requestSystemLock() {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
         }
-    } catch (e) {}
+    } catch (error) {}
 }
 
 function setupVAD() {
     if (!localStream) return;
 
     try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
 
-        const audioContext = new AC();
+        const audioContext = new AudioContext();
         const source = audioContext.createMediaStreamSource(localStream);
         const analyser = audioContext.createAnalyser();
         analyser.fftSize = 256;
@@ -1494,13 +1455,15 @@ function setupVAD() {
 
             analyser.getByteFrequencyData(data);
             const volume = data.reduce((sum, v) => sum + v, 0) / data.length;
+
             const status = $('vad-status');
             if (status) {
-                status.textContent =
-                    volume > 12 ? 'الحالة: تتحدث الآن 🎙️' : 'الحالة: متصل (صامت)';
+                status.textContent = volume > 12
+                    ? 'الحالة: تتحدث الآن 🎙️'
+                    : 'الحالة: متصل (صامت)';
             }
         }, 200);
-    } catch (e) {}
+    } catch (error) {}
 }
 
 async function restoreRoomAfterRefresh() {
@@ -1516,12 +1479,12 @@ async function restoreRoomAfterRefresh() {
     try {
         await joinRoom(safeRoomName(savedRoom));
     } catch (error) {
-        showToast('كانت لديك غرفة مفتوحة. اضغط دخول لإعادة الاتصال.', 'info');
+        showToast('كانت لديك غرفة مفتوحة. اضغط "دخول" لإعادة الاتصال.', 'info');
     }
 }
 
 /* =========================================================
-   تنقل ومظهر
+   التنقل والمظهر (مع حفظ الصفحة)
    ========================================================= */
 
 function switchView(viewName) {
@@ -1529,7 +1492,7 @@ function switchView(viewName) {
         section.classList.add('hidden');
     });
 
-    const target = $('view-' + viewName);
+    const target = $(`view-${viewName}`);
     if (target) target.classList.remove('hidden');
 
     document.querySelectorAll('.nav-btn').forEach(button => {
@@ -1537,7 +1500,7 @@ function switchView(viewName) {
         button.classList.add('text-gray-400');
     });
 
-    const active = $('nav-' + viewName);
+    const active = $(`nav-${viewName}`);
     if (active) {
         active.classList.add('text-accent', 'active');
         active.classList.remove('text-gray-400');
@@ -1564,7 +1527,7 @@ function toggleSettings() {
    ========================================================= */
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('[Pulse] بدء التشغيل');
+    console.log('[Pulse] بدء تشغيل التطبيق');
 
     if (
         localStorage.getItem('theme') === 'dark' ||
@@ -1575,10 +1538,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     await initIdentity();
-    loadMyProfile();
     startFeed();
     startRoomDirectory();
 
+    // استعادة الصفحة الأخيرة
     const savedView = localStorage.getItem('pulse_view') || 'timeline';
     switchView(savedView);
 
@@ -1591,12 +1554,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        const swUrl = new URL('sw.js', window.location.href).href;
-        const scope = new URL('./', window.location.href).pathname;
-
         navigator.serviceWorker
-            .register(swUrl, { scope })
-            .then(reg => console.log('[SW] Registered', reg.scope))
+            .register('./sw.js')
+            .then(() => console.log('[SW] Registered'))
             .catch(error => console.warn('[SW] Failed:', error));
     });
 }
@@ -1615,8 +1575,4 @@ window.toggleSettings = toggleSettings;
 window.exportKey = exportKey;
 window.importKey = importKey;
 window.copyNpub = copyNpub;
-window.openProfileModal = openProfileModal;
-window.closeProfileModal = closeProfileModal;
-window.saveProfile = saveProfile;
-window.previewProfilePicture = previewProfilePicture;
 window.showToast = showToast;
