@@ -408,16 +408,49 @@ async function compressImage(file, maxWidth, quality) {
     });
 }
 
+// nostr.build (وأي سيرفر NIP-96 مشابه) بيطلب Authorization header موقّع
+// بمفتاح Nostr بتاعك (NIP-98) — من غيره بيرجع 401.
+async function buildNip98AuthHeader(url, method) {
+    const eventTemplate = {
+        kind: 27235,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+            ['u', url],
+            ['method', method]
+        ],
+        content: ''
+    };
+
+    const signedEvent = await signEvent(eventTemplate);
+    const json = JSON.stringify(signedEvent);
+    // ترميز base64 آمن حتى لو حصل محتوى غير ASCII مستقبلاً
+    const base64 = btoa(unescape(encodeURIComponent(json)));
+    return `Nostr ${base64}`;
+}
+
 async function uploadImageToNostrBuild(file) {
+    const uploadUrl = 'https://nostr.build/api/v2/upload/files';
+
     const form = new FormData();
     form.append('file[]', file);
 
-    const res = await fetch('https://nostr.build/api/v2/upload/files', {
+    let authHeader = null;
+    try {
+        authHeader = await buildNip98AuthHeader(uploadUrl, 'POST');
+    } catch (authError) {
+        console.warn('[Upload] تعذر توليد ترويسة NIP-98، سيتم المحاولة بدونها:', authError);
+    }
+
+    const res = await fetch(uploadUrl, {
         method: 'POST',
+        headers: authHeader ? { Authorization: authHeader } : undefined,
         body: form
     });
 
     if (!res.ok) {
+        if (res.status === 401) {
+            throw new Error('رفض السيرفر رفع الصورة (401) — تأكد من هويتك وحاول تاني');
+        }
         throw new Error('فشل رفع الصورة (' + res.status + ')');
     }
 
