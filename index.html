@@ -213,6 +213,16 @@
                     </span>
                 </div>
 
+                <button
+                    onclick="openProfileModal()"
+                    class="w-9 h-9 rounded-full overflow-hidden bg-indigo-500 flex items-center justify-center shrink-0"
+                    aria-label="تعديل الملف الشخصي"
+                    title="تعديل الملف الشخصي"
+                >
+                    <img id="header-avatar-img" src="" alt="" class="hidden w-full h-full object-cover">
+                    <span id="header-avatar-fallback" class="text-white text-xs font-black">P</span>
+                </button>
+
             </div>
         </div>
     </header>
@@ -241,6 +251,14 @@
 
         <div class="space-y-2">
             <button
+                onclick="openProfileModal()"
+                class="w-full flex items-center justify-center gap-2 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 py-2.5 rounded-xl text-sm font-medium transition"
+            >
+                <i class="fas fa-user-edit"></i>
+                تعديل الملف الشخصي
+            </button>
+
+            <button
                 onclick="copyNpub()"
                 class="w-full flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 py-2.5 rounded-xl text-sm font-medium transition dark:text-white"
             >
@@ -268,6 +286,98 @@
         <p class="text-[11px] text-red-500/80 mt-4 leading-relaxed">
             ⚠️ لا تشارك مفتاحك الخاص (nsec) مع أي شخص. من يملكه يملك حسابك.
         </p>
+    </div>
+
+    <!-- ===================== EDIT PROFILE (Twitter-style) ===================== -->
+    <div id="profile-modal"
+         class="hidden fixed inset-0 z-[90] modal-overlay flex items-end sm:items-center justify-center">
+        <div class="bg-white dark:bg-surface w-full max-w-xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700">
+
+            <!-- Top bar -->
+            <div class="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 py-3 bg-white/90 dark:bg-surface/90 backdrop-blur border-b border-gray-100 dark:border-gray-800">
+                <div class="flex items-center gap-3">
+                    <button type="button" onclick="closeProfileModal()"
+                        class="w-9 h-9 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center"
+                        aria-label="إغلاق">
+                        <i class="fas fa-times text-gray-700 dark:text-gray-200"></i>
+                    </button>
+                    <h3 class="font-black text-lg dark:text-white">تعديل الملف الشخصي</h3>
+                </div>
+                <button type="button" id="btn-save-profile" onclick="saveProfile()"
+                    class="bg-gray-900 dark:bg-white text-white dark:text-black font-bold text-sm px-5 py-1.5 rounded-full hover:opacity-90 transition disabled:opacity-50">
+                    حفظ
+                </button>
+            </div>
+
+            <!-- Banner -->
+            <div class="relative w-full h-36 sm:h-44 bg-gray-300 dark:bg-gray-700 overflow-hidden">
+                <img id="profile-banner-img" src="" alt="" class="hidden w-full h-full object-cover">
+                <div id="profile-banner-empty" class="absolute inset-0 bg-gradient-to-br from-gray-400 to-gray-600 dark:from-gray-700 dark:to-gray-900"></div>
+
+                <div class="absolute inset-0 flex items-center justify-center gap-3 bg-black/30">
+                    <label for="banner-file-input"
+                        class="w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition"
+                        title="تغيير صورة الغلاف">
+                        <i class="fas fa-camera"></i>
+                    </label>
+                    <button type="button" id="btn-remove-banner" onclick="removeBanner()"
+                        class="hidden w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white items-center justify-center transition"
+                        title="إزالة الغلاف">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+                <input id="banner-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" onchange="onBannerSelected(event)">
+            </div>
+
+            <!-- Avatar overlapping banner -->
+            <div class="relative px-4 -mt-12 mb-2 flex justify-between items-end">
+                <div class="relative">
+                    <div class="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 border-white dark:border-surface bg-indigo-500 overflow-hidden flex items-center justify-center text-white text-3xl font-black shadow-md">
+                        <img id="profile-avatar-img" src="" alt="" class="hidden w-full h-full object-cover">
+                        <span id="profile-avatar-letter">P</span>
+                    </div>
+                    <label for="avatar-file-input"
+                        class="absolute inset-0 m-auto w-11 h-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition"
+                        title="تغيير الصورة الشخصية">
+                        <i class="fas fa-camera text-sm"></i>
+                    </label>
+                    <input id="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" onchange="onAvatarSelected(event)">
+                </div>
+            </div>
+
+            <!-- Fields -->
+            <div class="px-4 pb-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">الاسم</label>
+                    <input id="profile-name" type="text" maxlength="50" placeholder="اسمك"
+                        oninput="onProfileNameInput()"
+                        class="w-full px-4 py-3 rounded-xl bg-transparent border border-gray-300 dark:border-gray-600 outline-none focus:border-accent dark:text-white text-sm">
+                    <div class="text-[11px] text-gray-400 text-left mt-1"><span id="name-count">0</span>/50</div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">النبذة</label>
+                    <textarea id="profile-about" rows="3" maxlength="160" placeholder="عرّف بنفسك"
+                        oninput="onProfileAboutInput()"
+                        class="w-full px-4 py-3 rounded-xl bg-transparent border border-gray-300 dark:border-gray-600 outline-none focus:border-accent dark:text-white text-sm resize-none"></textarea>
+                    <div class="text-[11px] text-gray-400 text-left mt-1"><span id="about-count">0</span>/160</div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">الموقع (اختياري)</label>
+                    <input id="profile-location" type="text" maxlength="30" placeholder="المدينة، البلد"
+                        class="w-full px-4 py-3 rounded-xl bg-transparent border border-gray-300 dark:border-gray-600 outline-none focus:border-accent dark:text-white text-sm">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">الموقع الإلكتروني (اختياري)</label>
+                    <input id="profile-website" type="url" maxlength="100" placeholder="https://"
+                        class="w-full px-4 py-3 rounded-xl bg-transparent border border-gray-300 dark:border-gray-600 outline-none focus:border-accent dark:text-white text-sm">
+                </div>
+
+                <p id="profile-upload-status" class="text-xs text-gray-400 text-center hidden"></p>
+            </div>
+        </div>
     </div>
 
     <!-- MAIN -->
