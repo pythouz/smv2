@@ -1,12 +1,11 @@
 {
-  "id": "/",
   "name": "Pulse — منصة المجتمع الحي",
   "short_name": "Pulse",
-  "description": "منصة مجتمع حي للنقاش والغرف الصوتية المباشرة عبر Nostr و WebRTC",
-  "start_url": "./",
+  "description": "تطبيق الغرف الصوتية والمنشورات اللامركزية عبر Nostr",
+  "id": "/",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
   "background_color": "#0b0f19",
   "theme_color": "#FF4D00",
@@ -15,21 +14,21 @@
   "categories": ["social", "entertainment"],
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='96' fill='%230F0F0F'/><text x='50%' y='54%' dominant-baseline='middle' text-anchor='middle' font-size='280' font-weight='900' font-family='system-ui,Arial' fill='%23FF4D00'>P</text></svg>",
+      "src": "./icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='96' fill='%230F0F0F'/><text x='50%' y='54%' dominant-baseline='middle' text-anchor='middle' font-size='280' font-weight='900' font-family='system-ui,Arial' fill='%23FF4D00'>P</text></svg>",
+      "src": "./icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%230F0F0F'/><text x='50%' y='54%' dominant-baseline='middle' text-anchor='middle' font-size='260' font-weight='900' font-family='system-ui,Arial' fill='%23FF4D00'>P</text></svg>",
+      "src": "./icons/icon-maskable-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "maskable"
     }
   ]
