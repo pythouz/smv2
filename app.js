@@ -27,6 +27,7 @@ const pool = new NostrTools.SimplePool();
 const seenEvents = new Set();
 const renderedPosts = new Map();
 const profileCache = new Map();
+let myProfile = { name: '', picture: '', about: '' };
 let postsSubscription = null;
 let reactionsSubscription = null;
 const discoveredRooms = new Map();
@@ -152,7 +153,9 @@ console.warn('[Nostr] NIP-07 فشل:', nip07Error);
          showToast('تم إنشاء هوية جديدة. صدّرها واحفظها!', 'info');
      }
      secretKeyHex = hexSk;
-     pk = NostrTools.getPublicKey(secretKeyHex);
+     // تحويل hex إلى Uint8Array متوافق مع v1.17.0
+     const skBytes = new Uint8Array(secretKeyHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+     pk = NostrTools.getPublicKey(skBytes);
      npub = NostrTools.nip19.npubEncode(pk);
      usingNip07 = false;
      updateIdentityUI();
@@ -187,7 +190,9 @@ if (usingNip07 && window.nostr && window.nostr.signEvent) {
 return await window.nostr.signEvent(eventTemplate);
 }
 if (!secretKeyHex) throw new Error('لا يوجد مفتاح توقيع متاح');
-return NostrTools.finalizeEvent(eventTemplate, secretKeyHex);
+// تحويل hex إلى Uint8Array متوافق مع v1.17.0
+const skBytes = new Uint8Array(secretKeyHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+return NostrTools.finalizeEvent(eventTemplate, skBytes);
 }
 function exportKey() {
 if (usingNip07) {
@@ -232,7 +237,8 @@ const input = prompt('الصق nsec أو المفتاح السري (64 حرف he
      }
      localStorage.setItem(storageKey, hex);
      secretKeyHex = hex;
-     pk = NostrTools.getPublicKey(secretKeyHex);
+     const skBytes = new Uint8Array(hex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+     pk = NostrTools.getPublicKey(skBytes);
      npub = NostrTools.nip19.npubEncode(pk);
      usingNip07 = false;
      updateIdentityUI();
@@ -261,417 +267,14 @@ prompt('انسخ npub:', npub);
 }
 }
 /* =========================================================
-   Profile editor — Twitter-style (kind 0 + image upload)
-   ========================================================= */
-
-let myProfile = {
-    name: '',
-    picture: '',
-    banner: '',
-    about: '',
-    location: '',
-    website: ''
-};
-
-// مسودات قبل الحفظ (لو لسه مترفعتش)
-let pendingAvatarFile = null;
-let pendingBannerFile = null;
-let pendingAvatarPreviewUrl = null;
-let pendingBannerPreviewUrl = null;
-
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-
-function revokePreview(url) {
-    if (url && String(url).startsWith('blob:')) {
-        try { URL.revokeObjectURL(url); } catch (e) {}
-    }
-}
-
-function validateImageFile(file) {
-    if (!file) return 'لم يتم اختيار ملف';
-    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-        return 'صيغة غير مدعومة. استخدم JPG أو PNG أو WebP';
-    }
-    if (file.size > MAX_IMAGE_BYTES) {
-        return 'حجم الصورة كبير (الحد 5MB)';
-    }
-    return null;
-}
-
-async function compressImage(file, maxWidth, quality) {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        const objectUrl = URL.createObjectURL(file);
-        img.onload = () => {
-            try {
-                const scale = Math.min(1, maxWidth / img.width);
-                const w = Math.round(img.width * scale);
-                const h = Math.round(img.height * scale);
-                const canvas = document.createElement('canvas');
-                canvas.width = w;
-                canvas.height = h;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, w, h);
-                canvas.toBlob(
-                    blob => {
-                        URL.revokeObjectURL(objectUrl);
-                        if (!blob) return reject(new Error('فشل ضغط الصورة'));
-                        resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
-                    },
-                    'image/jpeg',
-                    quality
-                );
-            } catch (e) {
-                URL.revokeObjectURL(objectUrl);
-                reject(e);
-            }
-        };
-        img.onerror = () => {
-            URL.revokeObjectURL(objectUrl);
-            reject(new Error('تعذر قراءة الصورة'));
-        };
-        img.src = objectUrl;
-    });
-}
-
-// دالة الرفع الجديدة باستخدام void.cat (بديلة عن nostr.build)
-async function uploadImageToVoidCat(file) {
-    // حساب SHA-256 للملف (مطلوب من void.cat)
-    const arrayBuffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-    const res = await fetch('https://void.cat/upload?cli=true', {
-        method: 'POST',
-        headers: {
-            'V-Content-Type': file.type || 'application/octet-stream',
-            'V-Full-Digest': `sha256:${hashHex}`,
-            'V-Filename': file.name || 'image.jpg'
-        },
-        body: file
-    });
-
-    if (!res.ok) {
-        throw new Error('فشل رفع الصورة (' + res.status + ')');
-    }
-
-    // void.cat يرجع الرابط المباشر كنص عادي عند استخدام ?cli=true
-    const url = await res.text();
-    if (!url || !url.startsWith('https://')) {
-        throw new Error('لم يُرجع سيرفر الصور رابطًا صالحًا');
-    }
-    return url.trim();
-}
-
-function setUploadStatus(text, isError) {
-    const el = $('profile-upload-status');
-    if (!el) return;
-    if (!text) {
-        el.classList.add('hidden');
-        el.textContent = '';
-        return;
-    }
-    el.classList.remove('hidden');
-    el.textContent = text;
-    el.className = 'text-xs text-center ' + (isError ? 'text-red-500' : 'text-gray-400');
-}
-
-function onProfileNameInput() {
-    const val = ($('profile-name')?.value || '');
-    const counter = $('name-count');
-    if (counter) counter.textContent = String(val.length);
-    const letter = $('profile-avatar-letter');
-    if (letter && !myProfile.picture && !pendingAvatarPreviewUrl) {
-        letter.textContent = (val.trim() || 'P').slice(0, 1).toUpperCase();
-    }
-}
-
-function onProfileAboutInput() {
-    const val = ($('profile-about')?.value || '');
-    const counter = $('about-count');
-    if (counter) counter.textContent = String(val.length);
-}
-
-function renderProfileImages() {
-    const avatarImg = $('profile-avatar-img');
-    const avatarLetter = $('profile-avatar-letter');
-    const bannerImg = $('profile-banner-img');
-    const bannerEmpty = $('profile-banner-empty');
-    const removeBannerBtn = $('btn-remove-banner');
-
-    const avatarSrc = pendingAvatarPreviewUrl || myProfile.picture || '';
-    if (avatarImg && avatarLetter) {
-        if (avatarSrc) {
-            avatarImg.src = avatarSrc;
-            avatarImg.classList.remove('hidden');
-            avatarLetter.classList.add('hidden');
-        } else {
-            avatarImg.classList.add('hidden');
-            avatarLetter.classList.remove('hidden');
-            avatarLetter.textContent = (myProfile.name || 'P').slice(0, 1).toUpperCase();
-        }
-    }
-
-    const bannerSrc = pendingBannerPreviewUrl || myProfile.banner || '';
-    if (bannerImg && bannerEmpty) {
-        if (bannerSrc) {
-            bannerImg.src = bannerSrc;
-            bannerImg.classList.remove('hidden');
-            bannerEmpty.classList.add('hidden');
-            if (removeBannerBtn) {
-                removeBannerBtn.classList.remove('hidden');
-                removeBannerBtn.classList.add('flex');
-            }
-        } else {
-            bannerImg.classList.add('hidden');
-            bannerEmpty.classList.remove('hidden');
-            if (removeBannerBtn) {
-                removeBannerBtn.classList.add('hidden');
-                removeBannerBtn.classList.remove('flex');
-            }
-        }
-    }
-}
-
-function onAvatarSelected(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
-    const err = validateImageFile(file);
-    if (err) {
-        showToast(err, 'error');
-        return;
-    }
-
-    revokePreview(pendingAvatarPreviewUrl);
-    pendingAvatarFile = file;
-    pendingAvatarPreviewUrl = URL.createObjectURL(file);
-    renderProfileImages();
-}
-
-function onBannerSelected(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
-    const err = validateImageFile(file);
-    if (err) {
-        showToast(err, 'error');
-        return;
-    }
-
-    revokePreview(pendingBannerPreviewUrl);
-    pendingBannerFile = file;
-    pendingBannerPreviewUrl = URL.createObjectURL(file);
-    renderProfileImages();
-}
-
-function removeBanner() {
-    pendingBannerFile = null;
-    revokePreview(pendingBannerPreviewUrl);
-    pendingBannerPreviewUrl = null;
-    myProfile.banner = '';
-    renderProfileImages();
-}
-
-function openProfileModal() {
-    const modal = $('profile-modal');
-    if (!modal) return;
-
-    pendingAvatarFile = null;
-    pendingBannerFile = null;
-    revokePreview(pendingAvatarPreviewUrl);
-    revokePreview(pendingBannerPreviewUrl);
-    pendingAvatarPreviewUrl = null;
-    pendingBannerPreviewUrl = null;
-
-    if ($('profile-name')) $('profile-name').value = myProfile.name || '';
-    if ($('profile-about')) $('profile-about').value = myProfile.about || '';
-    if ($('profile-location')) $('profile-location').value = myProfile.location || '';
-    if ($('profile-website')) $('profile-website').value = myProfile.website || '';
-
-    onProfileNameInput();
-    onProfileAboutInput();
-    renderProfileImages();
-    setUploadStatus('');
-
-    modal.classList.remove('hidden');
-    $('settings-panel')?.classList.add('hidden');
-}
-
-function closeProfileModal() {
-    $('profile-modal')?.classList.add('hidden');
-    revokePreview(pendingAvatarPreviewUrl);
-    revokePreview(pendingBannerPreviewUrl);
-    pendingAvatarPreviewUrl = null;
-    pendingBannerPreviewUrl = null;
-    pendingAvatarFile = null;
-    pendingBannerFile = null;
-}
-
-async function saveProfile() {
-    const name = ($('profile-name')?.value || '').trim().slice(0, 50);
-    const about = ($('profile-about')?.value || '').trim().slice(0, 160);
-    const location = ($('profile-location')?.value || '').trim().slice(0, 30);
-    const website = ($('profile-website')?.value || '').trim().slice(0, 100);
-
-    if (!name) {
-        showToast('الاسم مطلوب', 'error');
-        return;
-    }
-
-    const btn = $('btn-save-profile');
-    if (btn) btn.disabled = true;
-
-    try {
-        let pictureUrl = myProfile.picture || '';
-        let bannerUrl = myProfile.banner || '';
-
-        if (pendingAvatarFile) {
-            setUploadStatus('جاري رفع الصورة الشخصية...');
-            const compressed = await compressImage(pendingAvatarFile, 400, 0.85);
-            // تم التغيير هنا لاستخدام الدالة الجديدة
-            pictureUrl = await uploadImageToVoidCat(compressed);
-        }
-
-        if (pendingBannerFile) {
-            setUploadStatus('جاري رفع صورة الغلاف...');
-            const compressed = await compressImage(pendingBannerFile, 1500, 0.82);
-            // تم التغيير هنا لاستخدام الدالة الجديدة
-            bannerUrl = await uploadImageToVoidCat(compressed);
-        }
-
-        setUploadStatus('جاري حفظ الملف على Nostr...');
-
-        const contentObj = {
-            name,
-            display_name: name,
-            about: about || undefined,
-            picture: pictureUrl || undefined,
-            banner: bannerUrl || undefined,
-            location: location || undefined,
-            website: website || undefined
-        };
-
-        Object.keys(contentObj).forEach(k => {
-            if (contentObj[k] === undefined || contentObj[k] === '') delete contentObj[k];
-        });
-
-        const signed = await signEvent({
-            kind: 0,
-            created_at: Math.floor(Date.now() / 1000),
-            tags: [],
-            content: JSON.stringify(contentObj)
-        });
-
-        await Promise.any(
-            RELAYS.map(r => pool.publish([r], signed).catch(e => Promise.reject(e)))
-        ).catch(async () => {
-            await pool.publish(RELAYS, signed);
-        });
-
-        myProfile = {
-            name,
-            about,
-            picture: pictureUrl,
-            banner: bannerUrl,
-            location,
-            website
-        };
-
-        profileCache.set(pk, {
-            name,
-            picture: pictureUrl || null,
-            about: about || null
-        });
-
-        pendingAvatarFile = null;
-        pendingBannerFile = null;
-        revokePreview(pendingAvatarPreviewUrl);
-        revokePreview(pendingBannerPreviewUrl);
-        pendingAvatarPreviewUrl = null;
-        pendingBannerPreviewUrl = null;
-
-        updateHeaderAvatar();
-        updateAvatarsInDom(pk);
-        closeProfileModal();
-        showToast('تم تحديث الملف الشخصي', 'success');
-    } catch (error) {
-        console.error('[Profile]', error);
-        setUploadStatus(getErrorMessage(error), true);
-        showToast('فشل الحفظ: ' + getErrorMessage(error), 'error');
-    } finally {
-        if (btn) btn.disabled = false;
-    }
-}
-
-function loadMyProfile() {
-    if (!pk) return;
-    try {
-        pool.subscribeMany(
-            RELAYS,
-            [{ kinds: [0], authors: [pk], limit: 1 }],
-            {
-                onevent: event => {
-                    try {
-                        const meta = JSON.parse(event.content || '{}');
-                        myProfile = {
-                            name: meta.display_name || meta.name || '',
-                            picture: meta.picture || '',
-                            banner: meta.banner || '',
-                            about: meta.about || '',
-                            location: meta.location || '',
-                            website: meta.website || meta.url || ''
-                        };
-                        profileCache.set(pk, {
-                            name: myProfile.name || null,
-                            picture: myProfile.picture || null,
-                            about: myProfile.about || null
-                        });
-                        updateHeaderAvatar();
-                    } catch (e) {}
-                }
-            }
-        );
-    } catch (e) {}
-}
-
-function updateHeaderAvatar() {
-    const img = $('header-avatar-img');
-    const fb = $('header-avatar-fallback');
-    if (!img || !fb) return;
-
-    if (myProfile.picture) {
-        img.src = myProfile.picture;
-        img.classList.remove('hidden');
-        fb.classList.add('hidden');
-    } else {
-        img.classList.add('hidden');
-        fb.classList.remove('hidden');
-        fb.textContent = (myProfile.name || 'P').slice(0, 1).toUpperCase();
-    }
-}
-
-// تأكد من تصدير الدوال للواجهة
-window.openProfileModal = openProfileModal;
-window.closeProfileModal = closeProfileModal;
-window.saveProfile = saveProfile;
-window.onAvatarSelected = onAvatarSelected;
-window.onBannerSelected = onBannerSelected;
-window.removeBanner = removeBanner;
-window.onProfileNameInput = onProfileNameInput;
-window.onProfileAboutInput = onProfileAboutInput;
-/* =========================================================
-المنشورات
+Profiles (kind 0)
 ========================================================= */
 function fetchProfiles(pubkeys) {
 const needed = [...new Set(pubkeys)].filter(p => p && !profileCache.has(p));
 if (!needed.length) return;
 try {
-     pool.subscribeMany(
+     // تم التغيير من subscribeMany إلى subscribe
+     pool.subscribe(
          RELAYS,
          [{ kinds: [0], authors: needed.slice(0, 40), limit: 40 }],
          {
@@ -702,12 +305,122 @@ el.innerHTML = getAvatarHtml(pubkey, 'w-10 h-10');
 });
 if (pubkey === pk) updateHeaderAvatar();
 }
+function loadMyProfile() {
+if (!pk) return;
+try {
+// تم التغيير من subscribeMany إلى subscribe
+pool.subscribe(
+RELAYS,
+[{ kinds: [0], authors: [pk], limit: 1 }],
+{
+onevent: event => {
+try {
+const meta = JSON.parse(event.content || '{}');
+myProfile = {
+name: meta.display_name || meta.name || '',
+picture: meta.picture || '',
+about: meta.about || ''
+};
+profileCache.set(pk, {
+name: myProfile.name || null,
+picture: myProfile.picture || null,
+about: myProfile.about || null
+});
+updateHeaderAvatar();
+} catch (e) {}
+}
+}
+);
+} catch (e) {}
+}
+function updateHeaderAvatar() {
+const img = $('header-avatar-img');
+const fb = $('header-avatar-fallback');
+if (!img || !fb) return;
+if (myProfile.picture) {
+    img.src = myProfile.picture;
+    img.classList.remove('hidden');
+    fb.classList.add('hidden');
+} else {
+    img.classList.add('hidden');
+    fb.classList.remove('hidden');
+    fb.textContent = (myProfile.name || 'P').slice(0, 1).toUpperCase();
+}
+}
+function openProfileModal() {
+const modal = $('profile-modal');
+if (!modal) return;
+if ($('profile-name')) $('profile-name').value = myProfile.name || '';
+if ($('profile-picture')) $('profile-picture').value = myProfile.picture || '';
+if ($('profile-about')) $('profile-about').value = myProfile.about || '';
+previewProfilePicture();
+modal.classList.remove('hidden');
+$('settings-panel')?.classList.add('hidden');
+}
+function closeProfileModal() {
+$('profile-modal')?.classList.add('hidden');
+}
+function previewProfilePicture() {
+const url = ($('profile-picture')?.value || '').trim();
+const img = $('profile-preview-img');
+const letter = $('profile-preview-letter');
+if (!img || !letter) return;
+if (url) {
+    img.src = url;
+    img.classList.remove('hidden');
+    letter.classList.add('hidden');
+} else {
+    img.classList.add('hidden');
+    letter.classList.remove('hidden');
+    letter.textContent = (($('profile-name')?.value) || 'P').slice(0, 1).toUpperCase();
+}
+}
+async function saveProfile() {
+const name = ($('profile-name')?.value || '').trim().slice(0, 50);
+const picture = ($('profile-picture')?.value || '').trim().slice(0, 500);
+const about = ($('profile-about')?.value || '').trim().slice(0, 250);
+if (!name) {
+     showToast('اكتب اسمًا على الأقل', 'error');
+     return;
+ }
+ try {
+     const content = JSON.stringify({
+         name,
+         display_name: name,
+         ...(picture ? { picture } : {}),
+         ...(about ? { about } : {})
+     });
+     const signed = await signEvent({
+         kind: 0,
+         created_at: Math.floor(Date.now() / 1000),
+         tags: [],
+         content
+     });
+     await pool.publish(RELAYS, signed);
+     myProfile = { name, picture, about };
+     profileCache.set(pk, {
+         name,
+         picture: picture || null,
+         about: about || null
+     });
+     updateHeaderAvatar();
+     updateAvatarsInDom(pk);
+     closeProfileModal();
+     showToast('تم حفظ الملف الشخصي', 'success');
+ } catch (error) {
+     showToast('فشل حفظ البروفايل: ' + getErrorMessage(error), 'error');
+ }
+}
+/* =========================================================
+المنشورات
+========================================================= */
 function startFeed() {
 console.log('[Feed] بدء الاشتراك');
 const loading = $('loading-feed');
 if (loading) loading.classList.remove('hidden');
 try {
-     postsSubscription = pool.subscribeMany(
+     // تم التغيير من subscribeMany إلى subscribe
+     postsSubscription = pool.subscribe(
          RELAYS,
          [{ kinds: [1], '#t': [APP_TAG], limit: 50 }],
          {
@@ -888,7 +601,8 @@ if (reactionsSubscription) {
      try { reactionsSubscription.close(); } catch (e) {}
  }
  try {
-     reactionsSubscription = pool.subscribeMany(
+     // تم التغيير من subscribeMany إلى subscribe
+     reactionsSubscription = pool.subscribe(
          RELAYS,
          [{ kinds: [7, 1], '#e': postIds, limit: 500 }],
          {
@@ -1216,7 +930,8 @@ if (roomSubscription) {
     try { roomSubscription.close(); } catch (e) {}
 }
 try {
-    roomSubscription = pool.subscribeMany(
+    // تم التغيير من subscribeMany إلى subscribe
+    roomSubscription = pool.subscribe(
         RELAYS,
         [{ kinds: [ROOM_EVENT_KIND], '#t': [roomTag()], limit: 100 }],
         {
@@ -1377,7 +1092,8 @@ const tracks = localStream.getAudioTracks();
 function startRoomDirectory() {
 if (directorySubscription) return;
 try {
-     directorySubscription = pool.subscribeMany(
+     // تم التغيير من subscribeMany إلى subscribe
+     directorySubscription = pool.subscribe(
          RELAYS,
          [{ kinds: [ROOM_EVENT_KIND], '#t': [DISCOVERY_TAG], limit: 300 }],
          {
@@ -1686,9 +1402,5 @@ window.copyNpub = copyNpub;
 window.openProfileModal = openProfileModal;
 window.closeProfileModal = closeProfileModal;
 window.saveProfile = saveProfile;
-window.onAvatarSelected = onAvatarSelected;
-window.onBannerSelected = onBannerSelected;
-window.removeBanner = removeBanner;
-window.onProfileNameInput = onProfileNameInput;
-window.onProfileAboutInput = onProfileAboutInput;
+window.previewProfilePicture = previewProfilePicture;
 window.showToast = showToast;
