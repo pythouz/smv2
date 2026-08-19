@@ -891,34 +891,34 @@ function reorderFeed() {
 }
 
 /* =========================================================
-   دالة عرض الوسائط المحسّنة باستخدام DOMPurify
+   دالة عرض الوسائط المحسّنة باستخدام DOMPurify (التصحيح الجذري)
    ========================================================= */
 
 function renderMediaContent(content) {
     if (!content) return '';
 
-    // أولاً: تهريب النص العادي لحماية XSS
-    let html = escapeHtml(content);
+    // 1. استبدال الروابط بوسوم HTML مباشرة (بدون escapeHtml)
+    let html = content;
 
-    // 1. تحويل روابط الصور إلى وسم img مع onclick للتكبير
+    // 1.1 صور
     html = html.replace(
         /(https?:\/\/[^\s<>"']+\.(jpe?g|png|gif|webp|svg|bmp|ico)(\?[^\s<>"']*)?)/gi,
         (match) => {
-            const safeUrl = match.replace(/&amp;/g, '&'); // إصلاح ترميز &
+            const safeUrl = match.replace(/&/g, '&amp;'); // ترميز آمن للـ URL
             return `<img src="${safeUrl}" alt="صورة" class="max-w-full rounded-xl my-2 max-h-[500px] object-contain border border-gray-200 dark:border-gray-700 shadow-sm cursor-pointer" loading="lazy" onclick="window.open('${safeUrl}', '_blank')" onerror="this.style.display='none'" />`;
         }
     );
 
-    // 2. تحويل روابط الفيديو إلى وسم video
+    // 1.2 فيديو
     html = html.replace(
         /(https?:\/\/[^\s<>"']+\.(mp4|webm|mov|avi|mkv|ogg)(\?[^\s<>"']*)?)/gi,
         (match) => {
-            const safeUrl = match.replace(/&amp;/g, '&');
+            const safeUrl = match.replace(/&/g, '&amp;');
             return `<video src="${safeUrl}" controls class="max-w-full rounded-xl my-2 max-h-[500px] w-full border border-gray-200 dark:border-gray-700 shadow-sm" preload="metadata" playsinline></video>`;
         }
     );
 
-    // 3. تحويل روابط YouTube
+    // 1.3 YouTube
     html = html.replace(
         /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/gi,
         (match, videoId) => {
@@ -926,7 +926,7 @@ function renderMediaContent(content) {
         }
     );
 
-    // 4. تحويل روابط Vimeo
+    // 1.4 Vimeo
     html = html.replace(
         /(?:https?:\/\/)?(?:www\.)?vimeo\.com\/(\d+)/gi,
         (match, videoId) => {
@@ -934,7 +934,8 @@ function renderMediaContent(content) {
         }
     );
 
-    // 5. تحويل الروابط العامة إلى روابط قابلة للنقر (مع استثناء الروابط التي تم تحويلها بالفعل)
+    // 1.5 الروابط العامة (التي لم تتحول إلى وسوم)
+    // نستثني الروابط الموجودة داخل وسوم img أو video أو iframe
     html = html.replace(
         /(https?:\/\/[^\s<>"']+)(?![^<]*<\/?(?:img|video|iframe)>)/gi,
         (match) => {
@@ -942,11 +943,11 @@ function renderMediaContent(content) {
         }
     );
 
-    // 6. تنظيف HTML باستخدام DOMPurify (إن وجد) للحماية من XSS
+    // 2. تنظيف الناتج باستخدام DOMPurify (حماية من XSS مع الحفاظ على الوسوم)
     if (typeof DOMPurify !== 'undefined') {
         html = DOMPurify.sanitize(html, {
-            ALLOWED_TAGS: ['img', 'video', 'iframe', 'a', 'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ul', 'ol', 'li', 'blockquote', 'code', 'pre'],
-            ALLOWED_ATTR: ['src', 'alt', 'class', 'onclick', 'controls', 'preload', 'playsinline', 'href', 'target', 'rel', 'frameborder', 'allowfullscreen', 'loading', 'width', 'height']
+            ALLOWED_TAGS: ['img', 'video', 'iframe', 'a', 'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'span', 'div'],
+            ALLOWED_ATTR: ['src', 'alt', 'class', 'onclick', 'controls', 'preload', 'playsinline', 'href', 'target', 'rel', 'frameborder', 'allowfullscreen', 'loading', 'width', 'height', 'style']
         });
     }
 
