@@ -43,6 +43,17 @@ const profileCache = new Map();
 const postStats = new Map();          // postId -> { likes, replies, createdAt, myLikeEventId }
 const postContentMap = new Map();     // postId -> { content, created_at }
 
+// نظام إعجابات حقيقي (غير وهمي): بنعد كل pubkey مرة واحدة بس لكل منشور،
+// وبنتعامل صح مع الحذف (إلغاء الإعجاب) حتى لو جه بترتيب مختلف عن الإعجاب نفسه.
+const postLikers = new Map();         // postId -> Map(pubkey -> likeEventId)
+const likeEventIndex = new Map();     // likeEventId -> { postId, pubkey }
+const tombstonedEvents = new Set();   // eventIds اتحذفت (kind 5) — احتياطي لو الحذف وصل قبل الأصل
+
+function initPostState(id, createdAt) {
+    postStats.set(id, { likes: 0, replies: 0, createdAt, myLikeEventId: null });
+    postLikers.set(id, new Map());
+}
+
 let postsSubscription = null;
 let reactionsSubscription = null;
 let reactionResubscribeTimer = null;
@@ -656,6 +667,26 @@ function reorderFeed() {
 // 8. عرض الوسائط (الصور والفيديو) - المحور الأساسي
 // ============================
 
+// يفصل روابط الصور/الفيديو (لو كل السطر عبارة عن رابط وسائط بس) عن باقي النص —
+// مستخدمة في مودال التعديل عشان نعرض الوسائط كمعاينة صور بدل رابط نصي في المربع.
+const MEDIA_ONLY_LINE_RE = /^(https?:\/\/[^\s<>"']+\.(jpe?g|png|gif|webp|svg|bmp|ico|mp4|webm|mov|avi|mkv|ogg)(\?[^\s<>"']*)?)$/i;
+
+function extractMediaFromContent(content) {
+    if (!content) return { text: '', mediaUrls: [] };
+    const mediaUrls = [];
+    const keptLines = [];
+    for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && MEDIA_ONLY_LINE_RE.test(trimmed)) {
+            mediaUrls.push(trimmed);
+        } else {
+            keptLines.push(line);
+        }
+    }
+    const text = keptLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    return { text, mediaUrls };
+}
+
 function renderMediaContent(content) {
     if (!content) return '';
 
@@ -744,7 +775,7 @@ function startFeed() {
                 seenEvents.add(event.id);
                 limitSet(seenEvents, MAX_SEEN_EVENTS);
 
-                postStats.set(event.id, { likes: 0, replies: 0, createdAt: event.created_at, myLikeEventId: null });
+                initPostState(event.id, event.created_at);
                 updatePostScore(event.id);
                 postContentMap.set(event.id, { content: event.content, created_at: event.created_at });
                 renderPost(event);
@@ -811,11 +842,15 @@ function renderPost(event) {
             <button class="like-button flex items-center gap-2 hover:text-red-500 transition" onclick="likePost('${event.id}', '${event.pubkey}')" data-liked="false" data-postid="${event.id}">
                 <i class="far fa-heart"></i> <span>إعجاب</span> <span class="like-count" data-count="0">0</span>
             </button>
-            <button class="reply-button flex items-center gap-2 hover:text-accent transition" onclick="replyToPost('${event.id}', '${event.pubkey}')">
-                <i class="far fa-comment"></i> <span>رد</span> <span class="reply-count" data-count="0">0</span>
+            <button class="reply-button flex items-center gap-2 hover:text-accent transition" onclick="replyToPost('${event.id}', '${event.pubkey}')" title="اكتب تعليقًا">
+                <i class="far fa-comment"></i> <span>تعليق</span>
+            </button>
+            <button class="reply-toggle-button flex items-center gap-1.5 hover:text-accent hover:underline transition" onclick="toggleReplies('${event.id}')" title="عرض التعليقات">
+                <span class="reply-count" data-count="0">0</span> <span>تعليق</span>
+                <i class="fas fa-chevron-down text-[10px] reply-toggle-icon transition-transform duration-200"></i>
             </button>
         </div>
-        <div class="replies-container mt-3 space-y-2" data-replies="${event.id}"></div>
+        <div class="replies-container hidden mt-3 space-y-2" data-replies="${event.id}"></div>
     `;
 
     renderedPosts.set(event.id, div);
@@ -849,27 +884,25 @@ function handleDeleteEvent(event) {
         if (card && card.dataset.author === event.pubkey) removePostFromUI(targetId);
         return;
     }
-    // إلغاء الإعجاب
-    for (const [postId, stats] of postStats) {
-        if (stats.myLikeEventId === targetId) {
-            stats.likes = Math.max(0, stats.likes - 1);
-            stats.myLikeEventId = null;
-            updatePostScore(postId);
-            const card = getPostCard(postId);
-            if (card) {
-                const btn = card.querySelector('.like-button');
-                if (btn) {
-                    btn.dataset.liked = 'false';
-                    btn.querySelector('i').className = 'far fa-heart';
-                    btn.classList.remove('text-red-500', 'font-bold');
-                }
-                const count = card.querySelector('.like-count');
-                if (count) { count.dataset.count = String(stats.likes); count.textContent = String(stats.likes); }
-            }
-            reorderFeed();
-            break;
-        }
-    }
+
+    // إلغاء إعجاب — من أي مستخدم، مش أنا بس، وبغض النظر عن ترتيب وصول الأحداث.
+    tombstonedEvents.add(targetId); // احتياطي لو حدث الإعجاب لسه ما وصلش
+    limitSet(tombstonedEvents, MAX_SEEN_EVENTS);
+    const info = likeEventIndex.get(targetId);
+    if (!info) return; // مفيش إعجاب مسجل بالـ id ده لسه (أو مش إعجاب أصلاً)
+    likeEventIndex.delete(targetId);
+
+    const likers = postLikers.get(info.postId);
+    if (!likers || likers.get(info.pubkey) !== targetId) return; // اتلغى بالفعل أو استُبدل
+    likers.delete(info.pubkey);
+
+    const postStat = postStats.get(info.postId);
+    if (!postStat) return;
+    if (info.pubkey === pk) postStat.myLikeEventId = null;
+    updatePostScore(info.postId);
+    syncLikeCountUI(info.postId);
+    if (info.pubkey === pk) updateLikeUI(info.postId, false);
+    reorderFeed();
 }
 
 function removePostFromUI(postId) {
@@ -881,6 +914,7 @@ function removePostFromUI(postId) {
         postScores.delete(postId);
         postContentMap.delete(postId);
         seenEvents.delete(postId);
+        postLikers.delete(postId);
     }
 }
 
@@ -889,6 +923,60 @@ function removePostFromUI(postId) {
 // ============================
 
 let editingPostId = null;
+let editAttachments = []; // { url, type } — نفس فكرة pendingAttachments بس لمودال التعديل
+
+function isVideoUrl(url) {
+    return /\.(mp4|webm|mov|avi|mkv|ogg)(\?.*)?$/i.test(url || '');
+}
+
+function renderEditAttachmentPreviews() {
+    const wrap = $('edit-attachment-preview');
+    if (!wrap) return;
+    if (!editAttachments.length) {
+        wrap.innerHTML = '';
+        wrap.classList.add('hidden');
+        return;
+    }
+    wrap.classList.remove('hidden');
+    wrap.innerHTML = editAttachments.map((att, i) => {
+        const video = isVideoUrl(att.url);
+        const media = video
+            ? `<video src="${att.url}" class="w-full h-full object-cover pointer-events-none" muted></video>`
+            : `<img src="${att.url}" class="w-full h-full object-cover pointer-events-none" alt="معاينة مرفق" />`;
+        return `
+            <div class="relative w-20 h-20 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 flex-shrink-0 bg-gray-100 dark:bg-gray-800">
+                ${media}
+                <button type="button" onclick="removeEditAttachment(${i})"
+                        class="absolute top-1 left-1 w-5 h-5 bg-black/60 text-white rounded-full flex items-center justify-center text-[10px] hover:bg-black/80 transition"
+                        title="إزالة المرفق">
+                    <i class="fas fa-times"></i>
+                </button>
+                ${video ? '<div class="absolute bottom-1 right-1 text-white text-[10px] bg-black/60 rounded px-1"><i class="fas fa-video"></i></div>' : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+function removeEditAttachment(index) {
+    editAttachments.splice(index, 1);
+    renderEditAttachmentPreviews();
+}
+
+function triggerEditFileUpload() {
+    document.getElementById('edit-file-input')?.click();
+}
+
+async function handleEditFileSelect(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+    showToast('جاري رفع الملفات...', 'info');
+    const uploaded = await uploadFiles(Array.from(files));
+    event.target.value = '';
+    if (uploaded.length === 0) { showToast('فشل رفع الملفات', 'error'); return; }
+    editAttachments.push(...uploaded);
+    renderEditAttachmentPreviews();
+    showToast(`تم رفع ${uploaded.length} ملف(ات)`, 'success');
+}
 
 function editPost(postId) {
     const data = postContentMap.get(postId);
@@ -897,7 +985,14 @@ function editPost(postId) {
     const textarea = $('edit-input');
     if (!modal || !textarea) { showToast('مودال التعديل غير جاهز', 'error'); return; }
     editingPostId = postId;
-    textarea.value = data.content;
+
+    // نفصل روابط الصور/الفيديو عن النص عشان تتعرض كمعاينة زي المنشور الأصلي،
+    // مش كرابط نصي جوه مربع الكتابة
+    const { text, mediaUrls } = extractMediaFromContent(data.content);
+    textarea.value = text;
+    editAttachments = mediaUrls.map(url => ({ url, type: isVideoUrl(url) ? 'video/*' : 'image/*' }));
+    renderEditAttachmentPreviews();
+
     modal.classList.remove('hidden');
     setTimeout(() => textarea.focus(), 50);
 }
@@ -905,13 +1000,19 @@ function editPost(postId) {
 function closeEditModal() {
     $('edit-modal')?.classList.add('hidden');
     editingPostId = null;
+    editAttachments = [];
+    renderEditAttachmentPreviews();
 }
 
 async function confirmEdit() {
     if (!editingPostId) return;
     const textarea = $('edit-input');
-    const newContent = (textarea?.value || '').trim();
-    if (!newContent) { showToast('المحتوى لا يمكن أن يكون فارغاً', 'error'); return; }
+    const text = (textarea?.value || '').trim();
+    if (!text && editAttachments.length === 0) { showToast('المحتوى لا يمكن أن يكون فارغاً', 'error'); return; }
+
+    // نرجّع نص المنشور مع روابط الوسائط مجمّعين في نفس صيغة المنشور الأصلي
+    const mediaUrls = editAttachments.map(a => a.url);
+    const newContent = [text, ...mediaUrls].filter(Boolean).join('\n');
 
     const oldPostId = editingPostId;
     try {
@@ -929,11 +1030,12 @@ async function confirmEdit() {
             oldCard.remove();
             renderedPosts.delete(oldPostId);
             postStats.delete(oldPostId);
+            postLikers.delete(oldPostId);
             postScores.delete(oldPostId);
             postContentMap.delete(oldPostId);
             seenEvents.delete(oldPostId);
 
-            postStats.set(newEvent.id, { likes: 0, replies: 0, createdAt: newEvent.created_at, myLikeEventId: null });
+            initPostState(newEvent.id, newEvent.created_at);
             updatePostScore(newEvent.id);
             postContentMap.set(newEvent.id, { content: newEvent.content, created_at: newEvent.created_at });
             renderPost(newEvent);
@@ -941,7 +1043,7 @@ async function confirmEdit() {
             showToast('تم تعديل المنشور ✅', 'success');
         } else {
             seenEvents.add(newEvent.id);
-            postStats.set(newEvent.id, { likes: 0, replies: 0, createdAt: newEvent.created_at, myLikeEventId: null });
+            initPostState(newEvent.id, newEvent.created_at);
             updatePostScore(newEvent.id);
             postContentMap.set(newEvent.id, { content: newEvent.content, created_at: newEvent.created_at });
             renderPost(newEvent);
@@ -1035,7 +1137,7 @@ async function publishPost() {
         const event = await signEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags: [['t', APP_TAG]], content });
         if (!seenEvents.has(event.id)) {
             seenEvents.add(event.id);
-            postStats.set(event.id, { likes: 0, replies: 0, createdAt: event.created_at, myLikeEventId: null });
+            initPostState(event.id, event.created_at);
             postContentMap.set(event.id, { content: event.content, created_at: event.created_at });
             updatePostScore(event.id);
             renderPost(event);
@@ -1067,13 +1169,22 @@ function getReactionStats(postId) {
     };
 }
 
-function updateLikeUI(postId, liked, countDelta = 0) {
+// إظهار/إخفاء لوحة التعليقات — التعليقات ما بتظهرش إلا لو المستخدم ضغط على العداد
+function toggleReplies(postId) {
+    const card = getPostCard(postId);
+    if (!card) return;
+    const container = card.querySelector(`[data-replies="${CSS.escape(postId)}"]`);
+    const toggleBtn = card.querySelector('.reply-toggle-button');
+    const icon = toggleBtn?.querySelector('.reply-toggle-icon');
+    if (!container) return;
+    const willShow = container.classList.contains('hidden');
+    container.classList.toggle('hidden');
+    if (icon) icon.classList.toggle('rotate-180', willShow);
+}
+
+function updateLikeUI(postId, liked) {
     const stats = getReactionStats(postId);
     if (!stats) return;
-    const current = Number(stats.likeCount.dataset.count || 0);
-    const newCount = Math.max(0, current + countDelta);
-    stats.likeCount.dataset.count = String(newCount);
-    stats.likeCount.textContent = String(newCount);
     stats.likeButton.dataset.liked = liked ? 'true' : 'false';
     const icon = stats.likeButton.querySelector('i');
     if (liked) {
@@ -1085,11 +1196,27 @@ function updateLikeUI(postId, liked, countDelta = 0) {
     }
 }
 
+// يحدّث رقم الإعجابات المعروض من postLikers مباشرة (مصدر الحقيقة الوحيد)
+// عشان الرقم يفضل حقيقي دايمًا ومتزامن مع الحالة الفعلية، مش تراكم أحداث خام.
+function syncLikeCountUI(postId) {
+    const stats = getReactionStats(postId);
+    const likers = postLikers.get(postId);
+    const postStat = postStats.get(postId);
+    if (!likers || !postStat) return;
+    postStat.likes = likers.size;
+    if (stats?.likeCount) {
+        stats.likeCount.dataset.count = String(postStat.likes);
+        stats.likeCount.textContent = String(postStat.likes);
+    }
+}
+
 async function likePost(targetId, targetPubkey) {
     const stats = getReactionStats(targetId);
     if (!stats) { showToast('تعذر العثور على المنشور', 'error'); return; }
     const postStat = postStats.get(targetId);
     if (!postStat) return;
+    let likers = postLikers.get(targetId);
+    if (!likers) { likers = new Map(); postLikers.set(targetId, likers); }
 
     // إلغاء الإعجاب
     if (stats.likeButton.dataset.liked === 'true') {
@@ -1097,10 +1224,12 @@ async function likePost(targetId, targetPubkey) {
             try {
                 const deleteEvent = await signEvent({ kind: 5, created_at: Math.floor(Date.now() / 1000), tags: [['e', postStat.myLikeEventId]], content: '' });
                 await pool.publish(RELAYS, deleteEvent);
-                postStat.likes = Math.max(0, postStat.likes - 1);
+                likeEventIndex.delete(postStat.myLikeEventId);
+                likers.delete(pk);
                 postStat.myLikeEventId = null;
                 updatePostScore(targetId);
-                updateLikeUI(targetId, false, -1);
+                updateLikeUI(targetId, false);
+                syncLikeCountUI(targetId);
                 reorderFeed();
                 showToast('تم إلغاء الإعجاب', 'info');
             } catch (error) {
@@ -1110,14 +1239,19 @@ async function likePost(targetId, targetPubkey) {
         return;
     }
 
+    // لو أنا مُعجَب بالفعل (اتزامن من جهاز/جلسة تانية) مفيش داعي أرسل إعجاب تاني
+    if (likers.has(pk)) { updateLikeUI(targetId, true); syncLikeCountUI(targetId); return; }
+
     // إعجاب جديد
     try {
         const likeEvent = await signEvent({ kind: 7, created_at: Math.floor(Date.now() / 1000), tags: [['e', targetId], ['p', targetPubkey]], content: '+' });
         await pool.publish(RELAYS, likeEvent);
-        postStat.likes += 1;
+        likers.set(pk, likeEvent.id);
+        likeEventIndex.set(likeEvent.id, { postId: targetId, pubkey: pk });
         postStat.myLikeEventId = likeEvent.id;
         updatePostScore(targetId);
-        updateLikeUI(targetId, true, 1);
+        updateLikeUI(targetId, true);
+        syncLikeCountUI(targetId);
         stats.likeButton.classList.add('scale-110');
         setTimeout(() => stats.likeButton.classList.remove('scale-110'), 180);
         reorderFeed();
@@ -1144,22 +1278,31 @@ function startReactionSubscription() {
     } catch(e) { console.error('[Reactions] خطأ:', e); }
 }
 
+// يعالج إعجابًا واردًا من الشبكة بشكل يمنع العد الوهمي:
+// - يتجاهل الحدث لو كان محذوفًا بالفعل (وصل الحذف قبله من relay تاني).
+// - يعد كل pubkey مرة واحدة بس لكل منشور (تكرار الإعجاب من نفس الشخص ما بيتحسبش تاني).
 function handleIncomingLike(event) {
     if (seenEvents.has(event.id)) return;
     seenEvents.add(event.id);
     limitSet(seenEvents, MAX_SEEN_EVENTS);
+    if (tombstonedEvents.has(event.id)) return;
+
     const targetId = getTagValue(event.tags, 'e');
     if (!targetId) return;
-    if (event.pubkey === pk) return;
-    const stats = getReactionStats(targetId);
-    if (!stats) return;
     const postStat = postStats.get(targetId);
     if (!postStat) return;
-    postStat.likes += 1;
+
+    let likers = postLikers.get(targetId);
+    if (!likers) { likers = new Map(); postLikers.set(targetId, likers); }
+    if (likers.has(event.pubkey)) return; // نفس الشخص عمل أكتر من إعجاب — بيتحسب مرة واحدة بس
+
+    likers.set(event.pubkey, event.id);
+    likeEventIndex.set(event.id, { postId: targetId, pubkey: event.pubkey });
+    if (event.pubkey === pk) postStat.myLikeEventId = event.id;
+
     updatePostScore(targetId);
-    const current = Number(stats.likeCount.dataset.count || 0);
-    stats.likeCount.dataset.count = String(current + 1);
-    stats.likeCount.textContent = String(current + 1);
+    syncLikeCountUI(targetId);
+    if (event.pubkey === pk) updateLikeUI(targetId, true);
     reorderFeed();
 }
 
@@ -1230,6 +1373,17 @@ function handleIncomingReply(event) {
     `;
     container.appendChild(reply);
     fetchProfiles([event.pubkey]);
+
+    // لو التعليق ده تعليقي أنا، افتح لوحة التعليقات تلقائيًا عشان أشوفه فورًا
+    if (event.pubkey === pk) {
+        const topContainer = stats.card.querySelector(`[data-replies="${CSS.escape(rootId)}"]`);
+        const toggleIcon = stats.card.querySelector('.reply-toggle-button .reply-toggle-icon');
+        if (topContainer?.classList.contains('hidden')) {
+            topContainer.classList.remove('hidden');
+            toggleIcon?.classList.add('rotate-180');
+        }
+    }
+
     reorderFeed();
 }
 
@@ -1823,3 +1977,7 @@ window.confirmEdit = confirmEdit;
 window.triggerFileUpload = triggerFileUpload;
 window.handleFileSelect = handleFileSelect;
 window.removeAttachment = removeAttachment;
+window.toggleReplies = toggleReplies;
+window.triggerEditFileUpload = triggerEditFileUpload;
+window.handleEditFileSelect = handleEditFileSelect;
+window.removeEditAttachment = removeEditAttachment;
