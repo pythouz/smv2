@@ -891,25 +891,25 @@ function reorderFeed() {
 }
 
 /* =========================================================
-   دالة عرض الوسائط المحسّنة باستخدام DOMPurify (التصحيح الجذري)
+   دالة عرض الوسائط المحسّنة (التصحيح الجذري)
    ========================================================= */
 
 function renderMediaContent(content) {
     if (!content) return '';
 
-    // 1. استبدال الروابط بوسوم HTML مباشرة (بدون escapeHtml)
+    // 1. استبدال الروابط بوسوم HTML مباشرة (بدون تهريب)
     let html = content;
 
-    // 1.1 صور
+    // 1.1 صور (jpg, jpeg, png, gif, webp, svg, bmp, ico) مع معاملات اختيارية
     html = html.replace(
         /(https?:\/\/[^\s<>"']+\.(jpe?g|png|gif|webp|svg|bmp|ico)(\?[^\s<>"']*)?)/gi,
         (match) => {
-            const safeUrl = match.replace(/&/g, '&amp;'); // ترميز آمن للـ URL
+            const safeUrl = match.replace(/&/g, '&amp;');
             return `<img src="${safeUrl}" alt="صورة" class="max-w-full rounded-xl my-2 max-h-[500px] object-contain border border-gray-200 dark:border-gray-700 shadow-sm cursor-pointer" loading="lazy" onclick="window.open('${safeUrl}', '_blank')" onerror="this.style.display='none'" />`;
         }
     );
 
-    // 1.2 فيديو
+    // 1.2 فيديو (mp4, webm, mov, avi, mkv, ogg) مع معاملات اختيارية
     html = html.replace(
         /(https?:\/\/[^\s<>"']+\.(mp4|webm|mov|avi|mkv|ogg)(\?[^\s<>"']*)?)/gi,
         (match) => {
@@ -934,8 +934,7 @@ function renderMediaContent(content) {
         }
     );
 
-    // 1.5 الروابط العامة (التي لم تتحول إلى وسوم)
-    // نستثني الروابط الموجودة داخل وسوم img أو video أو iframe
+    // 1.5 الروابط العامة (التي لم تتحول إلى وسوم) - مع استثناء الروابط الموجودة داخل وسوم
     html = html.replace(
         /(https?:\/\/[^\s<>"']+)(?![^<]*<\/?(?:img|video|iframe)>)/gi,
         (match) => {
