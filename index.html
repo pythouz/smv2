@@ -608,6 +608,21 @@
     <div id="audio-container" aria-hidden="true"></div>
 
     <script src="./app.js"></script>
-
+    <!-- EDIT MODAL -->
+<div id="edit-modal" class="hidden fixed inset-0 z-[85] modal-overlay flex items-end sm:items-center justify-center p-4">
+    <div class="bg-white dark:bg-surface w-full max-w-md rounded-2xl shadow-2xl p-5 border border-gray-200 dark:border-gray-700 fade-in">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold dark:text-white">تعديل المنشور</h3>
+            <button onclick="closeEditModal()" class="w-8 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center">
+                <i class="fas fa-times text-gray-500"></i>
+            </button>
+            </div>
+        <textarea id="edit-input" rows="5" class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm resize-none outline-none focus:ring-2 focus:ring-accent dark:text-white"></textarea>
+        <div class="flex justify-end gap-2 mt-4">
+            <button onclick="closeEditModal()" class="px-4 py-2 rounded-xl text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition">إلغاء</button>
+            <button onclick="confirmEdit()" class="px-5 py-2 rounded-xl text-sm font-bold bg-blue-500 text-white hover:bg-blue-600 transition">حفظ التعديل</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>
