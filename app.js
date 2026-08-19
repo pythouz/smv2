@@ -40,8 +40,6 @@ const renderedPosts = new Map();      // postId -> HTMLElement
 const postScores = new Map();         // postId -> number (score)
 const profileCache = new Map();
 const postStats = new Map();          // postId -> { likes, replies, createdAt }
-
-// تخزين المنشورات الأصلية (للتعديل) - نحتاج محتوى المنشور ووقته
 const postContentMap = new Map();     // postId -> { content, created_at }
 
 let postsSubscription = null;
@@ -893,18 +891,16 @@ function startFeed() {
     try {
         postsSubscription = pool.subscribeMany(
             RELAYS,
-            [{ kinds: [1, 5], limit: 150 }], // نستمع أيضاً للحذف
+            [{ kinds: [1, 5], limit: 150 }],
             {
                 onevent: event => {
                     if (!event || !event.id) return;
 
-                    // معالجة الحذف (kind 5)
                     if (event.kind === 5) {
                         handleDeleteEvent(event);
                         return;
                     }
 
-                    // تصفية الوسم APP_TAG
                     const hasTag = event.tags && event.tags.some(t => t[0] === 't' && t[1] === APP_TAG);
                     if (!hasTag) return;
 
@@ -917,7 +913,6 @@ function startFeed() {
                     seenEvents.add(event.id);
                     limitSet(seenEvents, MAX_SEEN_EVENTS);
 
-                    // تهيئة الإحصائيات
                     postStats.set(event.id, {
                         likes: 0,
                         replies: 0,
@@ -925,7 +920,6 @@ function startFeed() {
                     });
                     updatePostScore(event.id);
 
-                    // تخزين المحتوى للتعديل
                     postContentMap.set(event.id, {
                         content: event.content,
                         created_at: event.created_at
@@ -1057,7 +1051,6 @@ async function deletePost(postId) {
         return;
     }
 
-    // تأكيد الحذف
     if (!confirm('هل أنت متأكد من حذف هذا المنشور؟')) return;
 
     try {
@@ -1073,7 +1066,6 @@ async function deletePost(postId) {
         const signedEvent = await signEvent(eventTemplate);
         await pool.publish(RELAYS, signedEvent);
 
-        // إزالة من الواجهة فوراً
         removePostFromUI(postId);
         showToast('تم حذف المنشور', 'success');
     } catch (error) {
@@ -1083,13 +1075,10 @@ async function deletePost(postId) {
 }
 
 function handleDeleteEvent(event) {
-    // معالجة حدث حذف من الشبكة
     const targetId = getTagValue(event.tags, 'e');
     if (!targetId) return;
 
-    // إذا كان المنشور موجوداً في الواجهة، احذفه
     if (renderedPosts.has(targetId)) {
-        // تحقق من أن الحذف صادر من كاتب المنشور (الأمان)
         const card = getPostCard(targetId);
         if (card && card.dataset.author === event.pubkey) {
             removePostFromUI(targetId);
@@ -1105,7 +1094,6 @@ function removePostFromUI(postId) {
         postStats.delete(postId);
         postScores.delete(postId);
         postContentMap.delete(postId);
-        // إزالة من seenEvents حتى نتمكن من إعادة ظهوره لو تم نشره مجدداً (نادراً)
         seenEvents.delete(postId);
     }
 }
@@ -1123,7 +1111,6 @@ function editPost(postId) {
         return;
     }
 
-    // فتح مودال التعديل
     const modal = $('edit-modal');
     const textarea = $('edit-input');
     if (!modal || !textarea) {
@@ -1158,14 +1145,13 @@ async function confirmEdit() {
         return;
     }
 
-    // نشر منشور جديد مع علامة تحل محل القديم
     try {
         const eventTemplate = {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
             tags: [
                 ['t', APP_TAG],
-                ['e', editingPostId, '', 'replaceable']  // يشير إلى المنشور الأصلي
+                ['e', editingPostId, '', 'replaceable']
             ],
             content: newContent
         };
@@ -1173,18 +1159,15 @@ async function confirmEdit() {
         const signedEvent = await signEvent(eventTemplate);
         await pool.publish(RELAYS, signedEvent);
 
-        // تحديث الواجهة: استبدال المحتوى القديم بالجديد
         const card = getPostCard(editingPostId);
         if (card) {
             const contentEl = card.querySelector('.post-content');
             if (contentEl) {
                 contentEl.textContent = newContent;
-                // تحديث التخزين
                 postContentMap.set(editingPostId, {
                     content: newContent,
                     created_at: signedEvent.created_at
                 });
-                // إعادة حساب الوزن (التاريخ تغير)
                 const stats = postStats.get(editingPostId);
                 if (stats) {
                     stats.createdAt = signedEvent.created_at;
@@ -1194,7 +1177,6 @@ async function confirmEdit() {
                 showToast('تم تعديل المنشور ✅', 'success');
             }
         } else {
-            // إذا لم نجد البطاقة (نادراً)، نضيف المنشور الجديد كحدث جديد
             seenEvents.add(signedEvent.id);
             postStats.set(signedEvent.id, {
                 likes: 0,
@@ -1275,7 +1257,7 @@ async function publishPost() {
 }
 
 /* =========================================================
-   الإعجابات والردود (نفسها مع تعديل بسيط)
+   الإعجابات والردود
    ========================================================= */
 
 function getReactionStats(postId) {
@@ -1368,7 +1350,7 @@ function startReactionSubscription() {
     try {
         reactionsSubscription = pool.subscribeMany(
             RELAYS,
-            [{ kinds: [7, 1, 5], '#e': postIds, limit: 500 }], // نضيف kind 5 للردود والحذف
+            [{ kinds: [7, 1, 5], '#e': postIds, limit: 500 }],
             {
                 onevent: event => {
                     if (!event || !event.id) return;
@@ -1512,26 +1494,752 @@ async function sendReply(targetId, targetPubkey, cleanContent) {
 }
 
 /* =========================================================
-   غرف الصوت WebRTC (نفسها، بدون تغيير)
+   غرف الصوت WebRTC
    ========================================================= */
 
-// ... (الكود الخاص بالغرف الصوتية لم يتغير، ويُترك كما هو في الملف الأصلي،
-// لكن اختصاراً سأدرجه مختصراً هنا، ولكن في الملف النهائي سيكون كاملاً)
+const WEBRTC_CONFIG = {
+    iceServers: [
+        {
+            urls: [
+                'stun:stun.l.google.com:19302',
+                'stun:stun1.l.google.com:19302',
+                'stun:stun2.l.google.com:19302',
+                'stun:stun3.l.google.com:19302',
+                'stun:stun4.l.google.com:19302'
+            ]
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelay',
+            credential: 'openrelay'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelay',
+            credential: 'openrelay'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelay',
+            credential: 'openrelay'
+        }
+    ],
+    iceTransportPolicy: 'all',
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require'
+};
 
-// أدرج باقي دوال الغرف كما هي في النسخة السابقة،
-// لأن التعديلات الأساسية تركز على المنشورات.
-// ولكن لضمان اكتمال الملف، سأدرجها كاملة في الملف النهائي.
+function createPeer() {
+    return new Promise((resolve, reject) => {
+        if (peer && !peer.destroyed) {
+            resolve(peer);
+            return;
+        }
 
-// ... (لن أكررها هنا للاختصار، لكنها موجودة في الملف الكامل المرفق)
+        const peerId =
+            'pulse-' +
+            (pk || 'anon').slice(0, 8) +
+            '-' +
+            Math.random().toString(36).slice(2, 8);
+
+        let settled = false;
+
+        try {
+            peer = new Peer(peerId, {
+                host: '0.peerjs.com',
+                port: 443,
+                secure: true,
+                path: '/',
+                debug: 1,
+                config: WEBRTC_CONFIG
+            });
+
+            peer.on('open', id => {
+                myPeerId = id;
+                if (!settled) {
+                    settled = true;
+                    resolve(peer);
+                }
+            });
+
+            peer.on('call', call => handleIncomingCall(call));
+
+            peer.on('error', error => {
+                if (!settled) {
+                    settled = true;
+                    reject(error);
+                }
+                handlePeerError(error);
+            });
+
+            peer.on('disconnected', () => {
+                showToast('انقطع اتصال خدمة الإشارة الصوتية', 'error');
+            });
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+function handlePeerError(error) {
+    const type = error?.type || '';
+    const message = getErrorMessage(error);
+
+    if (type === 'network' || type === 'server-error' || type === 'socket-error') {
+        showToast('مشكلة في شبكة الاتصال الصوتي: ' + message, 'error');
+        return;
+    }
+    if (type === 'unavailable-id') {
+        showToast('معرف الاتصال الصوتي مستخدم، حاول مرة أخرى', 'error');
+        return;
+    }
+    if (type === 'browser-incompatible') {
+        showToast('المتصفح لا يدعم WebRTC بشكل صحيح', 'error');
+        return;
+    }
+    showToast('خطأ WebRTC: ' + message, 'error');
+}
+
+async function toggleRoom(forceLeave = false) {
+    if (forceLeave) {
+        await leaveRoom();
+        return;
+    }
+    if (isJoiningRoom) return;
+
+    if (currentRoom) {
+        await leaveRoom();
+        return;
+    }
+
+    const input = $('room-input');
+    if (!input) return;
+
+    const roomName = safeRoomName(input.value);
+    if (!roomName) {
+        showToast('اكتب اسم الغرفة أولاً', 'error');
+        return;
+    }
+
+    await joinRoom(roomName);
+}
+
+async function joinRoom(roomName) {
+    if (isJoiningRoom) return;
+    isJoiningRoom = true;
+
+    try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error('المتصفح لا يدعم getUserMedia أو الصفحة ليست HTTPS');
+        }
+
+        showToast('جاري تشغيل الميكروفون...', 'info');
+
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    channelCount: 1
+                }
+            });
+        } catch (micError) {
+            if (micError.name === 'NotAllowedError') {
+                throw new Error('تم رفض صلاحية الميكروفون. اسمح للمتصفح باستخدام الميكروفون.');
+            }
+            if (micError.name === 'NotFoundError') {
+                throw new Error('لم يتم العثور على ميكروفون في الجهاز.');
+            }
+            if (micError.name === 'NotReadableError') {
+                throw new Error('الميكروفون مستخدم بواسطة تطبيق أو متصفح آخر.');
+            }
+            throw micError;
+        }
+
+        await createPeer();
+        if (!peer || peer.destroyed) {
+            throw new Error('تعذر إنشاء PeerJS');
+        }
+
+        currentRoom = roomName;
+        localStorage.setItem('active_room', currentRoom);
+        announcedPeers.clear();
+
+        updateRoomUI(true);
+        startBackgroundAudioEngine();
+        requestSystemLock();
+        setupVAD();
+        await announcePresence();
+        listenForPeers();
+
+        if (window._presenceInterval) clearInterval(window._presenceInterval);
+        window._presenceInterval = setInterval(() => {
+            if (currentRoom) announcePresence();
+        }, 45000);
+
+        showToast('دخلت غرفة "' + roomName + '" 🎙️', 'success');
+    } catch (error) {
+        console.error('[Room] فشل:', error);
+        showToast('فشل دخول الغرفة: ' + getErrorMessage(error), 'error');
+        cleanupRoomResources(false);
+    } finally {
+        isJoiningRoom = false;
+    }
+}
+
+function updateRoomUI(joined) {
+    const btn = $('btn-join-room');
+    const input = $('room-input');
+    const activeUi = $('active-room-ui');
+
+    const directoryUi = $('live-rooms-section');
+
+    if (joined) {
+        if (activeUi) activeUi.classList.remove('hidden');
+        if (directoryUi) directoryUi.classList.add('hidden');
+        if (btn) {
+            btn.textContent = 'مغادرة';
+            btn.classList.remove('bg-white', 'text-accent');
+            btn.classList.add('bg-red-500', 'text-white');
+        }
+        if (input) input.disabled = true;
+        if ($('current-room-name')) {
+            $('current-room-name').textContent = `غرفة: ${currentRoom}`;
+        }
+    } else {
+        if (activeUi) activeUi.classList.add('hidden');
+        if (directoryUi) directoryUi.classList.remove('hidden');
+        if (btn) {
+            btn.textContent = 'دخول';
+            btn.classList.remove('bg-red-500', 'text-white');
+            btn.classList.add('bg-white', 'text-accent');
+        }
+        if (input) input.disabled = false;
+    }
+}
+
+function roomTag() {
+    return `${APP_TAG}:voice:${safeRoomName(currentRoom)}`;
+}
+
+async function announcePresence() {
+    if (!currentRoom || !myPeerId) return;
+
+    const tag = roomTag();
+    const eventTemplate = {
+        kind: ROOM_EVENT_KIND,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+            ['t', tag],
+            ['t', DISCOVERY_TAG],
+            ['room', safeRoomName(currentRoom)]
+        ],
+        content: JSON.stringify({
+            peerId: myPeerId,
+            room: safeRoomName(currentRoom),
+            npub: npub,
+            timestamp: Date.now()
+        })
+    };
+
+    try {
+        const event = await signEvent(eventTemplate);
+        await pool.publish(RELAYS, event);
+    } catch (error) {
+        console.error('[Nostr Room] فشل presence:', error);
+        showToast('تم تشغيل الغرفة لكن تعذر إعلان وجودك للشبكة', 'error');
+    }
+}
+
+function listenForPeers() {
+    if (!currentRoom) return;
+
+    if (roomSubscription) {
+        try { roomSubscription.close(); } catch (e) {}
+    }
+
+    const tag = roomTag();
+
+    try {
+        roomSubscription = pool.subscribeMany(
+            RELAYS,
+            [{ kinds: [ROOM_EVENT_KIND], '#t': [tag], limit: 100 }],
+            {
+                onevent: event => handleRoomPresence(event),
+                oneose: () => {},
+                onclose: () => {}
+            }
+        );
+    } catch (error) {
+        showToast('فشل نظام اكتشاف المشاركين: ' + getErrorMessage(error), 'error');
+    }
+}
+
+function handleRoomPresence(event) {
+    if (!currentRoom || !event?.content) return;
+    if (event.pubkey === pk) return;
+
+    let data;
+    try {
+        data = JSON.parse(event.content);
+    } catch (e) {
+        return;
+    }
+
+    if (!data.peerId) return;
+    if (data.room && safeRoomName(data.room) !== safeRoomName(currentRoom)) return;
+    if (announcedPeers.has(data.peerId)) return;
+    if (activeCalls.size >= 5) return;
+
+    announcedPeers.add(data.peerId);
+
+    if (myPeerId && myPeerId < data.peerId) {
+        connectToPeer(data.peerId, data.npub || data.peerId);
+    }
+}
+
+function connectToPeer(targetPeerId, displayName) {
+    if (!peer || peer.destroyed || !localStream || !currentRoom) return;
+    if (targetPeerId === myPeerId) return;
+    if (activeCalls.has(targetPeerId)) return;
+
+    try {
+        const call = peer.call(targetPeerId, localStream, {
+            metadata: { room: currentRoom, caller: myPeerId }
+        });
+        if (!call) return;
+        handleCallEvents(call, displayName);
+    } catch (error) {
+        showToast('تعذر بدء الاتصال الصوتي مع مشارك', 'error');
+    }
+}
+
+function handleIncomingCall(call) {
+    if (!currentRoom || !localStream) {
+        try { call.close(); } catch (e) {}
+        return;
+    }
+    if (activeCalls.has(call.peer)) {
+        try { call.close(); } catch (e) {}
+        return;
+    }
+
+    try {
+        call.answer(localStream);
+        handleCallEvents(call, call.peer);
+    } catch (error) {
+        try { call.close(); } catch (e) {}
+    }
+}
+
+function handleCallEvents(call, displayName) {
+    if (!call) return;
+    const peerId = call.peer;
+    activeCalls.set(peerId, call);
+
+    call.on('stream', remoteStream => {
+        addPeerAudio(remoteStream, peerId, displayName);
+    });
+    call.on('close', () => removePeerCall(peerId));
+    call.on('error', () => {
+        showToast('انقطع اتصال أحد المشاركين', 'error');
+        removePeerCall(peerId);
+    });
+}
+
+function addPeerAudio(stream, peerId, displayName) {
+    if (!stream) return;
+
+    let audio = document.getElementById(`audio-${peerId}`);
+    if (!audio) {
+        audio = document.createElement('audio');
+        audio.id = `audio-${peerId}`;
+        audio.autoplay = true;
+        audio.playsInline = true;
+        audio.setAttribute('playsinline', '');
+        audio.controls = false;
+        audio.volume = 1;
+
+        const container = $('audio-container');
+        if (container) container.appendChild(audio);
+        else document.body.appendChild(audio);
+    }
+
+    audio.srcObject = stream;
+
+    const playPromise = audio.play();
+    if (playPromise) {
+        playPromise
+            .then(() => updatePeerCount())
+            .catch(() => {
+                showToast('المتصفح منع تشغيل الصوت. اضغط داخل الصفحة ثم أعد المحاولة.', 'error');
+                document.addEventListener('click', () => {
+                    audio.play().catch(() => {});
+                }, { once: true });
+            });
+    }
+
+    addPeerToUI(peerId, displayName);
+    updatePeerCount();
+}
+
+function addPeerToUI(peerId, displayName) {
+    const list = $('peers-list');
+    if (!list) return;
+
+    const id = `participant-${peerId}`;
+    if (document.getElementById(id)) return;
+
+    const div = document.createElement('div');
+    div.id = id;
+    div.className = 'flex items-center gap-2 bg-gray-50 dark:bg-gray-800 p-2 rounded-lg';
+
+    const safeName = String(displayName || peerId).slice(0, 16);
+    div.innerHTML = `
+        <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+        <span>${escapeHtml(safeName)}</span>
+    `;
+    list.appendChild(div);
+}
+
+function removePeerCall(peerId) {
+    const audio = document.getElementById(`audio-${peerId}`);
+    if (audio) {
+        try { audio.pause(); } catch (e) {}
+        audio.srcObject = null;
+        audio.remove();
+    }
+
+    const participant = document.getElementById(`participant-${peerId}`);
+    if (participant) participant.remove();
+
+    activeCalls.delete(peerId);
+    updatePeerCount();
+}
+
+function updatePeerCount() {
+    const count = $('peers-list')?.children.length || activeCalls.size;
+    const countElement = $('peer-count');
+    if (countElement) {
+        countElement.textContent = `الأشخاص: ${count}`;
+    }
+}
+
+function toggleMute() {
+    if (!localStream) {
+        showToast('لا يوجد ميكروفون نشط', 'error');
+        return;
+    }
+
+    const tracks = localStream.getAudioTracks();
+    if (!tracks.length) {
+        showToast('لم يتم العثور على مسار صوتي', 'error');
+        return;
+    }
+
+    isMuted = !isMuted;
+    tracks.forEach(track => { track.enabled = !isMuted; });
+
+    const btn = $('btn-mute');
+    if (btn) {
+        btn.innerHTML = isMuted
+            ? '<i class="fas fa-microphone-slash text-red-500"></i>'
+            : '<i class="fas fa-microphone"></i>';
+        btn.classList.toggle('bg-red-100', isMuted);
+        btn.classList.toggle('text-red-500', isMuted);
+    }
+
+    showToast(isMuted ? 'تم كتم الميكروفون' : 'تم تشغيل الميكروفون', 'success');
+}
 
 /* =========================================================
-   اكتشاف الغرف الحية (Room Directory) - نفسها
+   اكتشاف الغرف الحية (Room Directory)
    ========================================================= */
 
-// ... (نفس الكود السابق)
+function startRoomDirectory() {
+    if (directorySubscription) return;
+
+    try {
+        directorySubscription = pool.subscribeMany(
+            RELAYS,
+            [{ kinds: [ROOM_EVENT_KIND], '#t': [DISCOVERY_TAG], limit: 300 }],
+            {
+                onevent: event => handleDirectoryPresence(event),
+                oneose: () => renderRoomDirectory(),
+                onclose: () => {}
+            }
+        );
+    } catch (error) {
+        console.warn('[Room Directory] فشل الاشتراك:', error);
+    }
+
+    if (!directoryCleanupInterval) {
+        directoryCleanupInterval = setInterval(() => {
+            pruneRoomDirectory();
+            renderRoomDirectory();
+        }, 15000);
+    }
+}
+
+function handleDirectoryPresence(event) {
+    if (!event?.content) return;
+
+    let data;
+    try {
+        data = JSON.parse(event.content);
+    } catch (e) {
+        return;
+    }
+
+    const roomTagValue = event.tags.find(t => t[0] === 'room')?.[1];
+    const roomName = safeRoomName(roomTagValue || data.room || '');
+    if (!roomName || !data.peerId) return;
+
+    if (!discoveredRooms.has(roomName)) {
+        discoveredRooms.set(roomName, new Map());
+    }
+
+    discoveredRooms.get(roomName).set(event.pubkey, {
+        peerId: data.peerId,
+        lastSeen: Date.now()
+    });
+
+    if (discoveredRooms.size > MAX_DISCOVERED_ROOMS) {
+        const oldest = Array.from(discoveredRooms.keys()).slice(0, discoveredRooms.size - MAX_DISCOVERED_ROOMS);
+        oldest.forEach(key => discoveredRooms.delete(key));
+    }
+
+    renderRoomDirectory();
+}
+
+function pruneRoomDirectory() {
+    const now = Date.now();
+    discoveredRooms.forEach((members, roomName) => {
+        members.forEach((info, pubkey) => {
+            if (now - info.lastSeen > ROOM_PRESENCE_TTL_MS) {
+                members.delete(pubkey);
+            }
+        });
+        if (members.size === 0) {
+            discoveredRooms.delete(roomName);
+        }
+    });
+}
+
+function renderRoomDirectory() {
+    const container = $('live-rooms-list');
+    const emptyState = $('live-rooms-empty');
+    if (!container) return;
+
+    pruneRoomDirectory();
+
+    const rooms = Array.from(discoveredRooms.entries())
+        .map(([name, members]) => ({ name, count: members.size }))
+        .filter(r => r.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 12);
+
+    if (rooms.length === 0) {
+        container.innerHTML = '';
+        if (emptyState) emptyState.classList.remove('hidden');
+        return;
+    }
+
+    if (emptyState) emptyState.classList.add('hidden');
+
+    container.innerHTML = rooms.map(room => `
+        <button
+            onclick="joinDiscoveredRoom('${room.name.replace(/'/g, "\\'")}')"
+            class="w-full flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition rounded-xl px-4 py-3 text-right"
+        >
+            <span class="flex items-center gap-2 text-sm font-bold text-gray-800 dark:text-gray-100">
+                <i class="fas fa-circle text-[8px] text-green-500 animate-pulse"></i>
+                ${escapeHtml(room.name)}
+            </span>
+            <span class="text-xs text-gray-400 shrink-0">
+                <i class="fas fa-user-friends ml-1"></i>${room.count}
+            </span>
+        </button>
+    `).join('');
+}
+
+function joinDiscoveredRoom(roomName) {
+    if (currentRoom) return;
+    const input = $('room-input');
+    if (input) input.value = roomName;
+    joinRoom(safeRoomName(roomName));
+}
+
+async function leaveRoom() {
+    const previousRoom = currentRoom;
+    currentRoom = null;
+    localStorage.removeItem('active_room');
+
+    if (window._presenceInterval) {
+        clearInterval(window._presenceInterval);
+        window._presenceInterval = null;
+    }
+
+    cleanupRoomResources(true);
+    updateRoomUI(false);
+    showToast(previousRoom ? 'تمت مغادرة الغرفة' : 'تم الخروج', 'success');
+}
+
+function cleanupRoomResources(destroyPeer = true) {
+    if (roomSubscription) {
+        try { roomSubscription.close(); } catch (e) {}
+        roomSubscription = null;
+    }
+
+    announcedPeers.clear();
+
+    activeCalls.forEach(call => {
+        try { call.close(); } catch (e) {}
+    });
+    activeCalls.clear();
+
+    document.querySelectorAll('#audio-container audio, body > audio[id^="audio-"]').forEach(audio => {
+        try { audio.pause(); } catch (e) {}
+        audio.srcObject = null;
+        audio.remove();
+    });
+
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+    }
+
+    if (destroyPeer && peer) {
+        try { peer.destroy(); } catch (e) {}
+        peer = null;
+        myPeerId = null;
+    }
+
+    if (bgAudioContext) {
+        try { bgAudioContext.close(); } catch (e) {}
+        bgAudioContext = null;
+    }
+
+    if (silentAudioElement) {
+        try { silentAudioElement.pause(); } catch (e) {}
+        silentAudioElement.remove();
+        silentAudioElement = null;
+    }
+
+    if (wakeLock) {
+        try { wakeLock.release(); } catch (e) {}
+        wakeLock = null;
+    }
+
+    isMuted = false;
+
+    const list = $('peers-list');
+    if (list) list.innerHTML = '';
+
+    const muteButton = $('btn-mute');
+    if (muteButton) {
+        muteButton.innerHTML = '<i class="fas fa-microphone"></i>';
+        muteButton.classList.remove('bg-red-100', 'text-red-500');
+    }
+}
+
+function startBackgroundAudioEngine() {
+    try {
+        if (!bgAudioContext) {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+
+            bgAudioContext = new AudioContext();
+            if (bgAudioContext.state === 'suspended') {
+                bgAudioContext.resume().catch(() => {});
+            }
+
+            const oscillator = bgAudioContext.createOscillator();
+            const gain = bgAudioContext.createGain();
+            gain.gain.value = 0.00001;
+            oscillator.connect(gain);
+            gain.connect(bgAudioContext.destination);
+            oscillator.start();
+
+            silentAudioElement = document.createElement('audio');
+            silentAudioElement.id = 'voice-keepalive';
+            silentAudioElement.autoplay = true;
+            silentAudioElement.playsInline = true;
+            silentAudioElement.muted = true;
+            document.body.appendChild(silentAudioElement);
+            silentAudioElement.play().catch(() => {});
+        } else if (bgAudioContext.state === 'suspended') {
+            bgAudioContext.resume().catch(() => {});
+        }
+    } catch (error) {
+        console.error('[Audio] KeepAlive Error:', error);
+    }
+}
+
+async function requestSystemLock() {
+    try {
+        if ('wakeLock' in navigator) {
+            wakeLock = await navigator.wakeLock.request('screen');
+        }
+    } catch (error) {}
+}
+
+function setupVAD() {
+    if (!localStream) return;
+
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(localStream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+
+        const data = new Uint8Array(analyser.frequencyBinCount);
+
+        const interval = setInterval(() => {
+            if (!currentRoom) {
+                clearInterval(interval);
+                try { audioContext.close(); } catch (e) {}
+                return;
+            }
+            if (isMuted) return;
+
+            analyser.getByteFrequencyData(data);
+            const volume = data.reduce((sum, v) => sum + v, 0) / data.length;
+
+            const status = $('vad-status');
+            if (status) {
+                status.textContent = volume > 12
+                    ? 'الحالة: تتحدث الآن 🎙️'
+                    : 'الحالة: متصل (صامت)';
+            }
+        }, 200);
+    } catch (error) {}
+}
+
+async function restoreRoomAfterRefresh() {
+    const savedRoom = localStorage.getItem('active_room');
+    if (!savedRoom) return;
+
+    const input = $('room-input');
+    if (input) input.value = savedRoom;
+
+    currentRoom = null;
+    await sleep(800);
+
+    try {
+        await joinRoom(safeRoomName(savedRoom));
+    } catch (error) {
+        showToast('كانت لديك غرفة مفتوحة. اضغط "دخول" لإعادة الاتصال.', 'info');
+    }
+}
 
 /* =========================================================
-   التنقل والمظهر
+   التنقل والمظهر (مع حفظ الصفحة)
    ========================================================= */
 
 function switchView(viewName) {
