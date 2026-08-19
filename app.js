@@ -1,8 +1,7 @@
 /* =========================================================
    Pulse - التطبيق الرئيسي (نسخة محسّنة بالكامل)
    نظام Nostr + المنشورات + غرف الصوت WebRTC
-   خوارزمية ترتيب ديناميكي + حذف وتعديل + إعجاب/إلغاء إعجاب + وسائط
-   مع تحسينات: توافق الجوال، تحميل المزيد، ردود متداخلة ثابتة
+   مع صلاحيات مشرف (حذف محلي لأي منشور)
    ========================================================= */
 
 // ============================
@@ -26,7 +25,27 @@ const ROOM_PRESENCE_TTL_MS = 90 * 1000;
 const INITIAL_FEED_LIMIT = 300;
 
 // ============================
-// 2. الحالة العامة
+// 2. المشرف (Admin)
+// ============================
+
+const ADMIN_NSEC = 'nsec1f57x59vhhrlz0x6t8jrs6dmdr7xaf28g8kfh8d6yncf4lurrw4vss82h7s';
+let adminPubkey = null;
+
+// محاولة استخراج pubkey للمشرف من nsec
+try {
+    const decoded = NostrTools.nip19.decode(ADMIN_NSEC);
+    if (decoded.type === 'nsec') {
+        // تحويل Uint8Array إلى hex string
+        const hexSk = Array.from(decoded.data).map(b => b.toString(16).padStart(2, '0')).join('');
+        adminPubkey = NostrTools.getPublicKey(hexSk);
+        console.log('[Admin] تم تحميل مفتاح المشرف:', adminPubkey);
+    }
+} catch (e) {
+    console.warn('[Admin] فشل تحليل مفتاح المشرف:', e);
+}
+
+// ============================
+// 3. الحالة العامة
 // ============================
 
 let secretKeyHex = null;
@@ -94,7 +113,7 @@ let oldestTimestamp = null;
 let loadingMore = false;
 
 // ============================
-// 3. أدوات مساعدة
+// 4. أدوات مساعدة
 // ============================
 
 const $ = id => document.getElementById(id);
@@ -140,7 +159,7 @@ function getDisplayName(pubkey) {
 }
 
 // ============================
-// 4. Toast
+// 5. Toast
 // ============================
 
 function showToast(message, type = 'success') {
@@ -160,7 +179,7 @@ function showToast(message, type = 'success') {
 }
 
 // ============================
-// 5. الهوية Nostr
+// 6. الهوية Nostr
 // ============================
 
 async function initIdentity() {
@@ -279,7 +298,7 @@ function copyNpub() {
 }
 
 // ============================
-// 6. الملف الشخصي (Profile)
+// 7. الملف الشخصي (Profile)
 // ============================
 
 let myProfile = { name: '', picture: '', banner: '', about: '', location: '', website: '' };
@@ -636,7 +655,7 @@ function fetchProfiles(pubkeys) {
 }
 
 // ============================
-// 7. خوارزمية التوزين (Edge-like)
+// 8. خوارزمية التوزين (Edge-like)
 // ============================
 
 function calculateScore(postId) {
@@ -670,7 +689,7 @@ function reorderFeed() {
 }
 
 // ============================
-// 8. عرض الوسائط (الصور والفيديو)
+// 9. عرض الوسائط (الصور والفيديو)
 // ============================
 
 const MEDIA_ONLY_LINE_RE = /^(https?:\/\/[^\s<>"']+\.(jpe?g|png|gif|webp|svg|bmp|ico|mp4|webm|mov|avi|mkv|ogg)(\?[^\s<>"']*)?)$/i;
@@ -746,7 +765,7 @@ function renderMediaContent(content) {
 }
 
 // ============================
-// 9. المنشورات (Feed)
+// 10. المنشورات (Feed)
 // ============================
 
 function startFeed() {
@@ -832,6 +851,11 @@ function renderPost(event) {
     });
     const displayName = getDisplayName(event.pubkey);
     const isOwner = (event.pubkey === pk);
+    const isAdmin = (pk === adminPubkey); // هل المستخدم الحالي هو المشرف؟
+
+    // إذا كان المشرف، نعرض زر حذف لكل المنشورات، وإلا فقط للمالك
+    const showDelete = isOwner || isAdmin;
+
     const contentHtml = renderMediaContent(event.content);
 
     const div = document.createElement('div');
@@ -848,10 +872,12 @@ function renderPost(event) {
                     <div class="text-xs text-gray-400">${escapeHtml(time)}</div>
                 </div>
             </div>
-            ${isOwner ? `
+            ${showDelete ? `
             <div class="flex gap-1 flex-shrink-0">
-                <button onclick="editPost('${event.id}')" class="text-xs text-blue-500 hover:text-blue-700 transition p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-500/10" title="تعديل"><i class="fas fa-edit"></i></button>
-                <button onclick="deletePost('${event.id}')" class="text-xs text-red-500 hover:text-red-700 transition p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10" title="حذف"><i class="fas fa-trash"></i></button>
+                ${isOwner ? `<button onclick="editPost('${event.id}')" class="text-xs text-blue-500 hover:text-blue-700 transition p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-500/10" title="تعديل"><i class="fas fa-edit"></i></button>` : ''}
+                <button onclick="deletePost('${event.id}', ${isAdmin ? 'true' : 'false'})" class="text-xs text-red-500 hover:text-red-700 transition p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10" title="${isAdmin ? 'حذف (مشرف)' : 'حذف'}">
+                    <i class="fas fa-trash"></i> ${isAdmin ? '<span class="text-[10px]">(مشرف)</span>' : ''}
+                </button>
             </div>
             ` : ''}
         </div>
@@ -881,17 +907,42 @@ function renderPost(event) {
 }
 
 // ============================
-// 10. حذف المنشور
+// 11. حذف المنشور (مع صلاحيات المشرف)
 // ============================
 
-async function deletePost(postId) {
+async function deletePost(postId, isAdminDelete = false) {
     if (!pk) { showToast('لا توجد هوية', 'error'); return; }
-    if (!confirm('هل أنت متأكد من حذف هذا المنشور؟')) return;
+    const card = getPostCard(postId);
+    if (!card) { showToast('المنشور غير موجود', 'error'); return; }
+    const author = card.dataset.author;
+    const isOwner = (author === pk);
+    const isAdmin = (pk === adminPubkey);
+
+    // التحقق من الصلاحية
+    if (!isOwner && !isAdmin) {
+        showToast('ليس لديك صلاحية حذف هذا المنشور', 'error');
+        return;
+    }
+
+    // إذا كان المشرف وليس المالك، نؤكد مع رسالة تحذيرية
+    if (isAdmin && !isOwner) {
+        if (!confirm('أنت مشرف، هل تريد حذف هذا المنشور (محلياً فقط، لن يُحذف من الشبكة)؟')) return;
+    } else {
+        if (!confirm('هل أنت متأكد من حذف هذا المنشور؟')) return;
+    }
+
     try {
-        const event = await signEvent({ kind: 5, created_at: Math.floor(Date.now() / 1000), tags: [['e', postId]], content: '' });
-        await pool.publish(RELAYS, event);
+        // إذا كان المالك، نحاول إرسال حدث حذف (kind 5) كما في السابق
+        if (isOwner) {
+            const event = await signEvent({ kind: 5, created_at: Math.floor(Date.now() / 1000), tags: [['e', postId]], content: '' });
+            await pool.publish(RELAYS, event);
+            showToast('تم حذف المنشور', 'success');
+        } else {
+            // المشرف: حذف محلي فقط، لا نرسل حدثاً
+            showToast('تم حذف المنشور محلياً بواسطة المشرف', 'info');
+        }
+        // إزالة المنشور من الواجهة
         removePostFromUI(postId);
-        showToast('تم حذف المنشور', 'success');
     } catch (error) {
         showToast('فشل الحذف: ' + getErrorMessage(error), 'error');
     }
@@ -940,7 +991,7 @@ function removePostFromUI(postId) {
 }
 
 // ============================
-// 11. تعديل المنشور
+// 12. تعديل المنشور
 // ============================
 
 let editingPostId = null;
@@ -1073,7 +1124,7 @@ async function confirmEdit() {
 }
 
 // ============================
-// 12. نشر منشور مع رفع الملفات
+// 13. نشر منشور مع رفع الملفات
 // ============================
 
 let pendingAttachments = [];
@@ -1164,7 +1215,7 @@ async function publishPost() {
 }
 
 // ============================
-// 13. الإعجابات والردود
+// 14. الإعجابات والردود
 // ============================
 
 function getReactionStats(postId) {
@@ -1426,7 +1477,7 @@ function handleIncomingReply(event) {
 }
 
 // ============================
-// 14. الردود المتداخلة (Reply to Comment)
+// 15. الردود المتداخلة (Reply to Comment)
 // ============================
 
 let pendingReply = null;
@@ -1518,7 +1569,7 @@ function closeReplyModal() {
 }
 
 // ============================
-// 15. غرف الصوت WebRTC (مختصرة)
+// 16. غرف الصوت WebRTC (مختصرة)
 // ============================
 
 const WEBRTC_CONFIG = {
@@ -1846,7 +1897,7 @@ async function restoreRoomAfterRefresh() {
 }
 
 // ============================
-// 16. اكتشاف الغرف الحية (Room Directory)
+// 17. اكتشاف الغرف الحية (Room Directory)
 // ============================
 
 function startRoomDirectory() {
@@ -1924,7 +1975,7 @@ function joinDiscoveredRoom(roomName) {
 }
 
 // ============================
-// 17. التنقل والمظهر
+// 18. التنقل والمظهر
 // ============================
 
 function switchView(viewName) {
@@ -1954,7 +2005,7 @@ function toggleSettings() {
 }
 
 // ============================
-// 18. تحميل المزيد
+// 19. تحميل المزيد
 // ============================
 
 function updateLoadMoreButton() {
@@ -1976,7 +2027,6 @@ async function loadMorePosts() {
 
     loadingMore = true;
     try {
-        // تحديد أقدم منشور معروض
         const cards = document.querySelectorAll('.post-card');
         if (!cards.length) { loadingMore = false; if (spinner) spinner.classList.add('hidden'); return; }
         let oldest = Infinity;
@@ -1987,7 +2037,6 @@ async function loadMorePosts() {
         }
         if (oldest === Infinity) { loadingMore = false; if (spinner) spinner.classList.add('hidden'); return; }
 
-        // جلب منشورات أقدم
         const sub = pool.subscribeMany(RELAYS, [{ kinds: [1], '#t': [APP_TAG], until: oldest, limit: 100 }], {
             onevent: event => {
                 if (!event?.id) return;
@@ -2009,7 +2058,6 @@ async function loadMorePosts() {
                 loadingMore = false;
                 if (spinner) spinner.classList.add('hidden');
                 updateLoadMoreButton();
-                // معالجة الردود المعلقة
                 processAllPendingReplies();
             },
             onclose: () => { loadingMore = false; if (spinner) spinner.classList.add('hidden'); }
@@ -2022,7 +2070,7 @@ async function loadMorePosts() {
 }
 
 // ============================
-// 19. دوال الصور المفقودة
+// 20. دوال الصور المفقودة
 // ============================
 
 function onAvatarSelected(event) {
@@ -2055,7 +2103,7 @@ function removeBanner() {
 }
 
 // ============================
-// 20. Boot
+// 21. Boot
 // ============================
 
 document.addEventListener('DOMContentLoaded', async () => {
