@@ -2022,7 +2022,40 @@ async function loadMorePosts() {
 }
 
 // ============================
-// 19. Boot
+// 19. دوال الصور المفقودة
+// ============================
+
+function onAvatarSelected(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const error = validateImageFile(file);
+    if (error) { showToast(error, 'error'); return; }
+    revokePreview(pendingAvatarPreviewUrl);
+    pendingAvatarFile = file;
+    pendingAvatarPreviewUrl = URL.createObjectURL(file);
+    renderProfileImages();
+}
+
+function onBannerSelected(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const error = validateImageFile(file);
+    if (error) { showToast(error, 'error'); return; }
+    revokePreview(pendingBannerPreviewUrl);
+    pendingBannerFile = file;
+    pendingBannerPreviewUrl = URL.createObjectURL(file);
+    renderProfileImages();
+}
+
+function removeBanner() {
+    revokePreview(pendingBannerPreviewUrl);
+    pendingBannerPreviewUrl = null;
+    pendingBannerFile = null;
+    renderProfileImages();
+}
+
+// ============================
+// 20. Boot
 // ============================
 
 document.addEventListener('DOMContentLoaded', async () => {
