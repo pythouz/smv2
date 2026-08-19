@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 
@@ -62,6 +63,7 @@
             color: #1A1A1A;
             transition: background-color 0.3s, color 0.3s;
             min-height: 100vh;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .dark body {
@@ -132,6 +134,7 @@
         .post-card {
             transition: all 0.25s ease;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            touch-action: manipulation;
         }
         .post-card:hover {
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
@@ -154,6 +157,7 @@
 
         button {
             -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
         }
 
         /* ===== AUDIO CONTAINER (hidden) ===== */
@@ -219,6 +223,14 @@
             .glass {
                 backdrop-filter: blur(10px);
                 -webkit-backdrop-filter: blur(10px);
+            }
+            .post-card {
+                padding: 1rem !important;
+            }
+            .avatar.w-11.h-11 {
+                width: 2.75rem;
+                height: 2.75rem;
+                font-size: 0.9rem;
             }
         }
     </style>
@@ -429,6 +441,17 @@
 
             <!-- Feed -->
             <div id="feed-container" class="space-y-5"></div>
+
+            <!-- Loading more -->
+            <div id="load-more-container" class="text-center py-4 hidden">
+                <button onclick="loadMorePosts()" 
+                        class="bg-accent text-white px-6 py-3 rounded-full font-bold transition hover:opacity-90 active:scale-95 shadow-md">
+                    تحميل المزيد
+                </button>
+                <div id="loading-more-spinner" class="hidden mt-2 text-gray-400">
+                    <i class="fas fa-circle-notch fa-spin"></i> جاري التحميل...
+                </div>
+            </div>
 
             <!-- Loading -->
             <div id="loading-feed" class="text-center py-12 text-gray-400">
