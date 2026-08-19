@@ -1,4 +1,3 @@
-// app.js (الجزء المعدّل بالكامل مع التحسينات)
 /* =========================================================
    Pulse - التطبيق الرئيسي (نسخة محسّنة بالكامل)
    نظام Nostr + المنشورات + غرف الصوت WebRTC
@@ -19,12 +18,12 @@ const RELAYS = [
 
 const APP_TAG = 'pulse-platform';
 const ROOM_EVENT_KIND = 20000;
-const MAX_SEEN_EVENTS = 10000;          // زيادة
-const MAX_RENDERED_POSTS = 500;         // زيادة
+const MAX_SEEN_EVENTS = 10000;
+const MAX_RENDERED_POSTS = 500;
 const MAX_DISCOVERED_ROOMS = 50;
 const DISCOVERY_TAG = APP_TAG + ':room-directory';
 const ROOM_PRESENCE_TTL_MS = 90 * 1000;
-const INITIAL_FEED_LIMIT = 300;         // زيادة
+const INITIAL_FEED_LIMIT = 300;
 
 // ============================
 // 2. الحالة العامة
@@ -46,11 +45,10 @@ const profileCache = new Map();
 const postStats = new Map();          // postId -> { likes, replies, createdAt, myLikeEventId }
 const postContentMap = new Map();     // postId -> { content, created_at }
 
-// نظام إعجابات حقيقي (غير وهمي): بنعد كل pubkey مرة واحدة بس لكل منشور،
-// وبنتعامل صح مع الحذف (إلغاء الإعجاب) حتى لو جه بترتيب مختلف عن الإعجاب نفسه.
+// نظام إعجابات حقيقي
 const postLikers = new Map();         // postId -> Map(pubkey -> likeEventId)
 const likeEventIndex = new Map();     // likeEventId -> { postId, pubkey }
-const tombstonedEvents = new Set();   // eventIds اتحذفت (kind 5) — احتياطي لو الحذف وصل قبل الأصل
+const tombstonedEvents = new Set();   // eventIds اتحذفت
 
 // ردود معلقة (لحل مشكلة الرفرش)
 const pendingRepliesMap = new Map();  // rootId -> [event, ...]
@@ -64,9 +62,6 @@ let postsSubscription = null;
 let reactionsSubscription = null;
 let reactionResubscribeTimer = null;
 
-// يعيد فتح اشتراك التفاعلات (إعجابات/ردود) ليشمل أي منشورات جديدة ظهرت على الشاشة.
-// بدون هذا، كانت المنشورات التي تصل بعد التحميل الأول لا يتم الاشتراك في تفاعلاتها
-// أبدًا فيفضل عداد الإعجاب عندها صفر حتى تعمل تحديث للصفحة.
 function scheduleReactionResubscribe() {
     if (reactionResubscribeTimer) clearTimeout(reactionResubscribeTimer);
     reactionResubscribeTimer = setTimeout(() => {
@@ -675,11 +670,9 @@ function reorderFeed() {
 }
 
 // ============================
-// 8. عرض الوسائط (الصور والفيديو) - المحور الأساسي
+// 8. عرض الوسائط (الصور والفيديو)
 // ============================
 
-// يفصل روابط الصور/الفيديو (لو كل السطر عبارة عن رابط وسائط بس) عن باقي النص —
-// مستخدمة في مودال التعديل عشان نعرض الوسائط كمعاينة صور بدل رابط نصي في المربع.
 const MEDIA_ONLY_LINE_RE = /^(https?:\/\/[^\s<>"']+\.(jpe?g|png|gif|webp|svg|bmp|ico|mp4|webm|mov|avi|mkv|ogg)(\?[^\s<>"']*)?)$/i;
 
 function extractMediaFromContent(content) {
@@ -701,12 +694,6 @@ function extractMediaFromContent(content) {
 function renderMediaContent(content) {
     if (!content) return '';
 
-    // 1. استبدال الروابط بوسوم HTML عبر أماكن محجوزة (placeholders)
-    //    السبب: لو حولنا الرابط مباشرة لـ <img src="URL">، وبعدين شغّلنا
-    //    قاعدة "الروابط العامة" على نفس النص، هي هتلاقي نفس الرابط تاني
-    //    (لأنه لسه موجود جوه src="...") وهتحوله لوسم <a> جوه الـ src نفسه
-    //    فيبوظ الـ HTML بالكامل ولا الصورة ولا الفيديو يتعرضوا.
-    //    الحل: نستبدل كل وسائط بمفتاح مؤقت، ونشغل باقي القواعد، وفي الآخر نرجّع الوسوم الحقيقية.
     let html = content;
     const placeholders = [];
     const stash = (tagHtml) => {
@@ -715,7 +702,6 @@ function renderMediaContent(content) {
         return token;
     };
 
-    // 1.1 الصور (jpg, jpeg, png, gif, webp, svg, bmp, ico) مع معاملات اختيارية
     html = html.replace(
         /(https?:\/\/[^\s<>"']+\.(jpe?g|png|gif|webp|svg|bmp|ico)(\?[^\s<>"']*)?)/gi,
         (match) => {
@@ -724,7 +710,6 @@ function renderMediaContent(content) {
         }
     );
 
-    // 1.2 الفيديو (mp4, webm, mov, avi, mkv, ogg)
     html = html.replace(
         /(https?:\/\/[^\s<>"']+\.(mp4|webm|mov|avi|mkv|ogg)(\?[^\s<>"']*)?)/gi,
         (match) => {
@@ -733,28 +718,23 @@ function renderMediaContent(content) {
         }
     );
 
-    // 1.3 YouTube
     html = html.replace(
         /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/gi,
         (_, vid) => stash(`<iframe class="w-full rounded-xl my-2 aspect-video border border-gray-200 dark:border-gray-700 shadow-sm" src="https://www.youtube.com/embed/${vid}" frameborder="0" allowfullscreen loading="lazy"></iframe>`)
     );
 
-    // 1.4 Vimeo
     html = html.replace(
         /(?:https?:\/\/)?(?:www\.)?vimeo\.com\/(\d+)/gi,
         (_, id) => stash(`<iframe class="w-full rounded-xl my-2 aspect-video border border-gray-200 dark:border-gray-700 shadow-sm" src="https://player.vimeo.com/video/${id}" frameborder="0" allowfullscreen loading="lazy"></iframe>`)
     );
 
-    // 1.5 الروابط العامة المتبقية (الوسائط أعلاه بقت placeholders فمش هتتلمس هنا)
     html = html.replace(
         /(https?:\/\/[^\s<>"']+)/gi,
         (match) => `<a href="${match}" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">${match}</a>`
     );
 
-    // 1.6 رجّع وسوم الوسائط الحقيقية مكان الـ placeholders
     html = html.replace(/\u0000MEDIA(\d+)\u0000/g, (_, i) => placeholders[Number(i)]);
 
-    // 2. التنقية باستخدام DOMPurify
     if (typeof DOMPurify !== 'undefined') {
         html = DOMPurify.sanitize(html, {
             ALLOWED_TAGS: ['img', 'video', 'iframe', 'a', 'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'span', 'div'],
@@ -781,6 +761,7 @@ function startFeed() {
                 if (event.kind === 5) { handleDeleteEvent(event); return; }
                 const hasTag = event.tags?.some(t => t[0] === 't' && t[1] === APP_TAG);
                 if (!hasTag) return;
+                // معالجة الردود عبر handleIncomingReply بدلاً من عرضها كمنشورات
                 if (isReplyEvent(event)) {
                     handleIncomingReply(event);
                     return;
@@ -793,7 +774,6 @@ function startFeed() {
                 updatePostScore(event.id);
                 postContentMap.set(event.id, { content: event.content, created_at: event.created_at });
                 renderPost(event);
-                // إعادة الترتيب سيتم بعد الإدراج
                 reorderFeed();
                 scheduleReactionResubscribe();
             },
@@ -803,7 +783,6 @@ function startFeed() {
                 // معالجة أي ردود معلقة بعد تحميل كل شيء
                 processAllPendingReplies();
                 startReactionSubscription();
-                // تحديث زر تحميل المزيد
                 updateLoadMoreButton();
             },
             onclose: () => console.log('[Feed] اشتراك أغلق')
@@ -927,15 +906,14 @@ function handleDeleteEvent(event) {
         return;
     }
 
-    // إلغاء إعجاب — من أي مستخدم، مش أنا بس، وبغض النظر عن ترتيب وصول الأحداث.
-    tombstonedEvents.add(targetId); // احتياطي لو حدث الإعجاب لسه ما وصلش
+    tombstonedEvents.add(targetId);
     limitSet(tombstonedEvents, MAX_SEEN_EVENTS);
     const info = likeEventIndex.get(targetId);
-    if (!info) return; // مفيش إعجاب مسجل بالـ id ده لسه (أو مش إعجاب أصلاً)
+    if (!info) return;
     likeEventIndex.delete(targetId);
 
     const likers = postLikers.get(info.postId);
-    if (!likers || likers.get(info.pubkey) !== targetId) return; // اتلغى بالفعل أو استُبدل
+    if (!likers || likers.get(info.pubkey) !== targetId) return;
     likers.delete(info.pubkey);
 
     const postStat = postStats.get(info.postId);
@@ -957,7 +935,7 @@ function removePostFromUI(postId) {
         postContentMap.delete(postId);
         seenEvents.delete(postId);
         postLikers.delete(postId);
-        pendingRepliesMap.delete(postId); // إزالة أي ردود معلقة
+        pendingRepliesMap.delete(postId);
     }
 }
 
@@ -966,7 +944,7 @@ function removePostFromUI(postId) {
 // ============================
 
 let editingPostId = null;
-let editAttachments = []; // { url, type } — نفس فكرة pendingAttachments بس لمودال التعديل
+let editAttachments = [];
 
 function isVideoUrl(url) {
     return /\.(mp4|webm|mov|avi|mkv|ogg)(\?.*)?$/i.test(url || '');
@@ -1029,8 +1007,6 @@ function editPost(postId) {
     if (!modal || !textarea) { showToast('مودال التعديل غير جاهز', 'error'); return; }
     editingPostId = postId;
 
-    // نفصل روابط الصور/الفيديو عن النص عشان تتعرض كمعاينة زي المنشور الأصلي،
-    // مش كرابط نصي جوه مربع الكتابة
     const { text, mediaUrls } = extractMediaFromContent(data.content);
     textarea.value = text;
     editAttachments = mediaUrls.map(url => ({ url, type: isVideoUrl(url) ? 'video/*' : 'image/*' }));
@@ -1053,21 +1029,17 @@ async function confirmEdit() {
     const text = (textarea?.value || '').trim();
     if (!text && editAttachments.length === 0) { showToast('المحتوى لا يمكن أن يكون فارغاً', 'error'); return; }
 
-    // نرجّع نص المنشور مع روابط الوسائط مجمّعين في نفس صيغة المنشور الأصلي
     const mediaUrls = editAttachments.map(a => a.url);
     const newContent = [text, ...mediaUrls].filter(Boolean).join('\n');
 
     const oldPostId = editingPostId;
     try {
-        // حذف القديم
         const deleteEvent = await signEvent({ kind: 5, created_at: Math.floor(Date.now() / 1000), tags: [['e', oldPostId]], content: '' });
         await pool.publish(RELAYS, deleteEvent);
 
-        // نشر الجديد
         const newEvent = await signEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags: [['t', APP_TAG]], content: newContent });
         await pool.publish(RELAYS, newEvent);
 
-        // تحديث الواجهة
         const oldCard = getPostCard(oldPostId);
         if (oldCard) {
             oldCard.remove();
@@ -1104,9 +1076,6 @@ async function confirmEdit() {
 // 12. نشر منشور مع رفع الملفات
 // ============================
 
-// المرفقات المعلّقة لمنشور جديد (لسه ما اتنشرش) — { url, type }
-// بنخزنها بره مربع الكتابة عشان المستخدم ميشوفش أي رابط نصي أبدًا،
-// وبنعرضها كمعاينة صور/فيديو مصغّرة زي تويتر.
 let pendingAttachments = [];
 
 function triggerFileUpload() {
@@ -1158,7 +1127,6 @@ async function handleFileSelect(event) {
     const uploaded = await uploadFiles(Array.from(files));
     event.target.value = '';
     if (uploaded.length === 0) { showToast('فشل رفع الملفات', 'error'); return; }
-    // بنضيف المرفقات لقائمة منفصلة وبنعرض معاينة مصغّرة بدل ما نكتب الرابط في المربع
     pendingAttachments.push(...uploaded);
     renderAttachmentPreviews();
     showToast(`تم رفع ${uploaded.length} ملف(ات)`, 'success');
@@ -1171,9 +1139,6 @@ async function publishPost() {
     if (!text && pendingAttachments.length === 0) { showToast('اكتب شيئًا أو أرفق صورة/فيديو قبل النشر', 'error'); return; }
     if (text.length > 4000) { showToast('النص طويل جدًا', 'error'); return; }
 
-    // نبني محتوى الحدث النهائي بدمج النص مع روابط المرفقات (الروابط دي هي اللي
-    // بتتحول لصور/فيديو فعلي عند العرض عبر renderMediaContent) — لكن المستخدم
-    // شافها كصور مصغّرة فقط، مش كنص رابط، طول ما هو بيكتب المنشور.
     const mediaUrls = pendingAttachments.map(a => a.url);
     const content = [text, ...mediaUrls].filter(Boolean).join('\n');
 
@@ -1213,7 +1178,6 @@ function getReactionStats(postId) {
     };
 }
 
-// إظهار/إخفاء لوحة التعليقات — التعليقات ما بتظهرش إلا لو المستخدم ضغط على العداد
 function toggleReplies(postId) {
     const card = getPostCard(postId);
     if (!card) return;
@@ -1240,8 +1204,6 @@ function updateLikeUI(postId, liked) {
     }
 }
 
-// يحدّث رقم الإعجابات المعروض من postLikers مباشرة (مصدر الحقيقة الوحيد)
-// عشان الرقم يفضل حقيقي دايمًا ومتزامن مع الحالة الفعلية، مش تراكم أحداث خام.
 function syncLikeCountUI(postId) {
     const stats = getReactionStats(postId);
     const likers = postLikers.get(postId);
@@ -1262,7 +1224,6 @@ async function likePost(targetId, targetPubkey) {
     let likers = postLikers.get(targetId);
     if (!likers) { likers = new Map(); postLikers.set(targetId, likers); }
 
-    // إلغاء الإعجاب
     if (stats.likeButton.dataset.liked === 'true') {
         if (postStat.myLikeEventId) {
             try {
@@ -1283,10 +1244,8 @@ async function likePost(targetId, targetPubkey) {
         return;
     }
 
-    // لو أنا مُعجَب بالفعل (اتزامن من جهاز/جلسة تانية) مفيش داعي أرسل إعجاب تاني
     if (likers.has(pk)) { updateLikeUI(targetId, true); syncLikeCountUI(targetId); return; }
 
-    // إعجاب جديد
     try {
         const likeEvent = await signEvent({ kind: 7, created_at: Math.floor(Date.now() / 1000), tags: [['e', targetId], ['p', targetPubkey]], content: '+' });
         await pool.publish(RELAYS, likeEvent);
@@ -1322,9 +1281,6 @@ function startReactionSubscription() {
     } catch(e) { console.error('[Reactions] خطأ:', e); }
 }
 
-// يعالج إعجابًا واردًا من الشبكة بشكل يمنع العد الوهمي:
-// - يتجاهل الحدث لو كان محذوفًا بالفعل (وصل الحذف قبله من relay تاني).
-// - يعد كل pubkey مرة واحدة بس لكل منشور (تكرار الإعجاب من نفس الشخص ما بيتحسبش تاني).
 function handleIncomingLike(event) {
     if (seenEvents.has(event.id)) return;
     seenEvents.add(event.id);
@@ -1338,7 +1294,7 @@ function handleIncomingLike(event) {
 
     let likers = postLikers.get(targetId);
     if (!likers) { likers = new Map(); postLikers.set(targetId, likers); }
-    if (likers.has(event.pubkey)) return; // نفس الشخص عمل أكتر من إعجاب — بيتحسب مرة واحدة بس
+    if (likers.has(event.pubkey)) return;
 
     likers.set(event.pubkey, event.id);
     likeEventIndex.set(event.id, { postId: targetId, pubkey: event.pubkey });
@@ -1356,9 +1312,6 @@ function getTagValue(tags, name) {
     return tag ? tag[1] : null;
 }
 
-// يحدد المنشور الأصلي (root) والتعليق الأب المباشر (reply) لحدث معين
-// بالاعتماد على علامات NIP-10 (['e', id, relay, 'root'|'reply']).
-// لردود المنشور المباشرة (تاج e واحد فقط بدون علامة root) يُعتبر هو نفسه الجذر.
 function getReplyTargets(tags) {
     if (!Array.isArray(tags)) return { rootId: null, parentId: null };
     const eTags = tags.filter(t => t[0] === 'e' && t[1]);
@@ -1368,7 +1321,6 @@ function getReplyTargets(tags) {
     if (rootTag) {
         return { rootId: rootTag[1], parentId: replyTag ? replyTag[1] : rootTag[1] };
     }
-    // لا توجد علامات — رد مباشر على منشور (تاج e واحد)
     return { rootId: eTags[0][1], parentId: eTags[0][1] };
 }
 
@@ -1392,7 +1344,6 @@ function processPendingReplies(postId) {
             toRemove.push(i);
         }
     }
-    // إزالة الناجحة بترتيب تنازلي
     for (let i = toRemove.length - 1; i >= 0; i--) {
         replies.splice(toRemove[i], 1);
     }
@@ -1400,14 +1351,11 @@ function processPendingReplies(postId) {
 }
 
 function attemptRenderReply(event, rootId, parentId) {
-    // التأكد من وجود المنشور الأصلي
     const rootCard = getPostCard(rootId);
     if (!rootCard) return false;
 
-    // تحديد الحاوية المناسبة
     let container = null;
     if (parentId && parentId !== rootId) {
-        // رد على تعليق آخر: نبحث عن عنصر الرد الأب
         const parentElement = document.querySelector(`[data-reply-id="${CSS.escape(parentId)}"]`);
         if (parentElement) {
             container = parentElement.querySelector('.nested-replies');
@@ -1419,15 +1367,12 @@ function attemptRenderReply(event, rootId, parentId) {
         }
     }
     if (!container) {
-        // رد مباشر على المنشور الأصلي
         container = rootCard.querySelector(`[data-replies="${CSS.escape(rootId)}"]`);
     }
     if (!container) return false;
 
-    // تأكد من عدم تكرار الرد
     if (document.querySelector(`[data-reply-id="${CSS.escape(event.id)}"]`)) return true;
 
-    // إنشاء عنصر الرد
     const reply = document.createElement('div');
     reply.dataset.replyId = event.id;
     reply.className = 'bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 text-sm border-r-2 border-accent/30 mr-2';
@@ -1442,7 +1387,6 @@ function attemptRenderReply(event, rootId, parentId) {
     container.appendChild(reply);
     fetchProfiles([event.pubkey]);
 
-    // زيادة عداد الردود للمنشور الأصلي
     const stats = getReactionStats(rootId);
     if (stats) {
         const current = Number(stats.replyCount.dataset.count || 0);
@@ -1453,10 +1397,8 @@ function attemptRenderReply(event, rootId, parentId) {
         updatePostScore(rootId);
     }
 
-    // معالجة أي ردود فرعية لهذا الرد
     processPendingReplies(event.id);
 
-    // إذا كان الرد لي، افتح لوحة التعليقات تلقائيًا
     if (event.pubkey === pk) {
         const topContainer = rootCard.querySelector(`[data-replies="${CSS.escape(rootId)}"]`);
         const toggleIcon = rootCard.querySelector('.reply-toggle-button .reply-toggle-icon');
@@ -1474,15 +1416,12 @@ function handleIncomingReply(event) {
     const { rootId, parentId } = getReplyTargets(event.tags);
     if (!rootId) return;
 
-    // تخزين الرد في المعلقات
     if (!pendingRepliesMap.has(rootId)) pendingRepliesMap.set(rootId, []);
-    // تجنب التكرار
     const existing = pendingRepliesMap.get(rootId).some(e => e.id === event.id);
     if (!existing) {
         pendingRepliesMap.get(rootId).push(event);
     }
 
-    // محاولة العرض فوراً
     attemptRenderReply(event, rootId, parentId);
 }
 
@@ -1579,7 +1518,7 @@ function closeReplyModal() {
 }
 
 // ============================
-// 15. غرف الصوت WebRTC (مختصرة، نفس الوظائف)
+// 15. غرف الصوت WebRTC (مختصرة)
 // ============================
 
 const WEBRTC_CONFIG = {
@@ -1767,4 +1706,385 @@ function addPeerAudio(stream, peerId, displayName) {
     audio.srcObject = stream;
     audio.play().catch(() => {
         showToast('المتصفح منع تشغيل الصوت', 'error');
-        document.addEventListener
+        document.addEventListener('click', () => audio.play().catch(() => {}), { once: true });
+    });
+    addPeerToUI(peerId, displayName);
+    updatePeerCount();
+}
+
+function addPeerToUI(peerId, displayName) {
+    const list = $('peers-list');
+    if (!list) return;
+    const id = `participant-${peerId}`;
+    if (document.getElementById(id)) return;
+    const div = document.createElement('div');
+    div.id = id;
+    div.className = 'flex items-center gap-2 bg-gray-50 dark:bg-gray-800/50 p-2 rounded-lg';
+    div.innerHTML = `<div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div><span class="text-sm">${escapeHtml(String(displayName || peerId).slice(0, 16))}</span>`;
+    list.appendChild(div);
+}
+
+function removePeerCall(peerId) {
+    const audio = document.getElementById(`audio-${peerId}`);
+    if (audio) { try { audio.pause(); } catch(e) {} audio.srcObject = null; audio.remove(); }
+    const participant = document.getElementById(`participant-${peerId}`);
+    if (participant) participant.remove();
+    activeCalls.delete(peerId);
+    updatePeerCount();
+}
+
+function updatePeerCount() {
+    const count = $('peers-list')?.children.length || activeCalls.size;
+    const countElement = $('peer-count');
+    if (countElement) countElement.textContent = `الأشخاص: ${count}`;
+}
+
+function toggleMute() {
+    if (!localStream) { showToast('لا يوجد ميكروفون نشط', 'error'); return; }
+    const tracks = localStream.getAudioTracks();
+    if (!tracks.length) { showToast('لم يتم العثور على مسار صوتي', 'error'); return; }
+    isMuted = !isMuted;
+    tracks.forEach(track => { track.enabled = !isMuted; });
+    const btn = $('btn-mute');
+    if (btn) {
+        btn.innerHTML = isMuted ? '<i class="fas fa-microphone-slash text-red-500"></i>' : '<i class="fas fa-microphone"></i>';
+        btn.classList.toggle('bg-red-100', isMuted);
+        btn.classList.toggle('text-red-500', isMuted);
+    }
+    showToast(isMuted ? 'تم كتم الميكروفون' : 'تم تشغيل الميكروفون', 'success');
+}
+
+// دوال مساعدة للغرف
+function startBackgroundAudioEngine() {
+    try {
+        if (!bgAudioContext) {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            bgAudioContext = new AudioContext();
+            if (bgAudioContext.state === 'suspended') bgAudioContext.resume().catch(() => {});
+            const osc = bgAudioContext.createOscillator();
+            const gain = bgAudioContext.createGain();
+            gain.gain.value = 0.00001;
+            osc.connect(gain);
+            gain.connect(bgAudioContext.destination);
+            osc.start();
+            silentAudioElement = document.createElement('audio');
+            silentAudioElement.id = 'voice-keepalive';
+            silentAudioElement.autoplay = true;
+            silentAudioElement.playsInline = true;
+            silentAudioElement.muted = true;
+            document.body.appendChild(silentAudioElement);
+            silentAudioElement.play().catch(() => {});
+        } else if (bgAudioContext.state === 'suspended') {
+            bgAudioContext.resume().catch(() => {});
+        }
+    } catch(e) { console.error('[Audio] KeepAlive Error:', e); }
+}
+
+async function requestSystemLock() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch(e) {}
+}
+
+function setupVAD() {
+    if (!localStream) return;
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        const ctx = new AudioContext();
+        const source = ctx.createMediaStreamSource(localStream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        const interval = setInterval(() => {
+            if (!currentRoom) { clearInterval(interval); try { ctx.close(); } catch(e) {} return; }
+            if (isMuted) return;
+            analyser.getByteFrequencyData(data);
+            const vol = data.reduce((s, v) => s + v, 0) / data.length;
+            const status = $('vad-status');
+            if (status) status.textContent = vol > 12 ? 'الحالة: تتحدث الآن 🎙️' : 'الحالة: متصل (صامت)';
+        }, 200);
+    } catch(e) {}
+}
+
+async function leaveRoom() {
+    const prev = currentRoom;
+    currentRoom = null;
+    localStorage.removeItem('active_room');
+    if (window._presenceInterval) { clearInterval(window._presenceInterval); window._presenceInterval = null; }
+    cleanupRoomResources(true);
+    updateRoomUI(false);
+    showToast(prev ? 'تمت مغادرة الغرفة' : 'تم الخروج', 'success');
+}
+
+function cleanupRoomResources(destroyPeer = true) {
+    if (roomSubscription) { try { roomSubscription.close(); } catch(e) {} roomSubscription = null; }
+    announcedPeers.clear();
+    activeCalls.forEach(call => { try { call.close(); } catch(e) {} });
+    activeCalls.clear();
+    document.querySelectorAll('#audio-container audio, body > audio[id^="audio-"]').forEach(a => { try { a.pause(); } catch(e) {} a.srcObject = null; a.remove(); });
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    if (destroyPeer && peer) { try { peer.destroy(); } catch(e) {} peer = null; myPeerId = null; }
+    if (bgAudioContext) { try { bgAudioContext.close(); } catch(e) {} bgAudioContext = null; }
+    if (silentAudioElement) { try { silentAudioElement.pause(); } catch(e) {} silentAudioElement.remove(); silentAudioElement = null; }
+    if (wakeLock) { try { wakeLock.release(); } catch(e) {} wakeLock = null; }
+    isMuted = false;
+    const list = $('peers-list');
+    if (list) list.innerHTML = '';
+    const muteBtn = $('btn-mute');
+    if (muteBtn) { muteBtn.innerHTML = '<i class="fas fa-microphone"></i>'; muteBtn.classList.remove('bg-red-100', 'text-red-500'); }
+}
+
+async function restoreRoomAfterRefresh() {
+    const saved = localStorage.getItem('active_room');
+    if (!saved) return;
+    const input = $('room-input');
+    if (input) input.value = saved;
+    currentRoom = null;
+    await sleep(800);
+    try { await joinRoom(safeRoomName(saved)); } catch(e) { showToast('كانت لديك غرفة مفتوحة. اضغط "دخول" لإعادة الاتصال.', 'info'); }
+}
+
+// ============================
+// 16. اكتشاف الغرف الحية (Room Directory)
+// ============================
+
+function startRoomDirectory() {
+    if (directorySubscription) return;
+    try {
+        directorySubscription = pool.subscribeMany(RELAYS, [{ kinds: [ROOM_EVENT_KIND], '#t': [DISCOVERY_TAG], limit: 300 }], {
+            onevent: event => handleDirectoryPresence(event),
+            oneose: () => renderRoomDirectory(),
+            onclose: () => {}
+        });
+    } catch(e) { console.warn('[Room Directory] فشل:', e); }
+    if (!directoryCleanupInterval) {
+        directoryCleanupInterval = setInterval(() => { pruneRoomDirectory(); renderRoomDirectory(); }, 15000);
+    }
+}
+
+function handleDirectoryPresence(event) {
+    if (!event?.content) return;
+    let data;
+    try { data = JSON.parse(event.content); } catch(e) { return; }
+    const roomTag = event.tags.find(t => t[0] === 'room')?.[1];
+    const roomName = safeRoomName(roomTag || data.room || '');
+    if (!roomName || !data.peerId) return;
+    if (!discoveredRooms.has(roomName)) discoveredRooms.set(roomName, new Map());
+    discoveredRooms.get(roomName).set(event.pubkey, { peerId: data.peerId, lastSeen: Date.now() });
+    if (discoveredRooms.size > MAX_DISCOVERED_ROOMS) {
+        const oldest = Array.from(discoveredRooms.keys()).slice(0, discoveredRooms.size - MAX_DISCOVERED_ROOMS);
+        oldest.forEach(key => discoveredRooms.delete(key));
+    }
+    renderRoomDirectory();
+}
+
+function pruneRoomDirectory() {
+    const now = Date.now();
+    discoveredRooms.forEach((members, roomName) => {
+        members.forEach((info, pubkey) => {
+            if (now - info.lastSeen > ROOM_PRESENCE_TTL_MS) members.delete(pubkey);
+        });
+        if (members.size === 0) discoveredRooms.delete(roomName);
+    });
+}
+
+function renderRoomDirectory() {
+    const container = $('live-rooms-list');
+    const emptyState = $('live-rooms-empty');
+    if (!container) return;
+    pruneRoomDirectory();
+    const rooms = Array.from(discoveredRooms.entries())
+        .map(([name, members]) => ({ name, count: members.size }))
+        .filter(r => r.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 12);
+    if (rooms.length === 0) {
+        container.innerHTML = '';
+        if (emptyState) emptyState.classList.remove('hidden');
+        return;
+    }
+    if (emptyState) emptyState.classList.add('hidden');
+    container.innerHTML = rooms.map(room => `
+        <button onclick="joinDiscoveredRoom('${room.name.replace(/'/g, "\\'")}')"
+                class="w-full flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-700 transition rounded-xl px-4 py-3 text-right">
+            <span class="flex items-center gap-2 text-sm font-bold text-gray-800 dark:text-gray-100">
+                <i class="fas fa-circle text-[8px] text-green-500 animate-pulse"></i> ${escapeHtml(room.name)}
+            </span>
+            <span class="text-xs text-gray-400 shrink-0"><i class="fas fa-user-friends ml-1"></i>${room.count}</span>
+        </button>
+    `).join('');
+}
+
+function joinDiscoveredRoom(roomName) {
+    if (currentRoom) return;
+    const input = $('room-input');
+    if (input) input.value = roomName;
+    joinRoom(safeRoomName(roomName));
+}
+
+// ============================
+// 17. التنقل والمظهر
+// ============================
+
+function switchView(viewName) {
+    document.querySelectorAll('.view-section').forEach(s => s.classList.add('hidden'));
+    const target = $(`view-${viewName}`);
+    if (target) target.classList.remove('hidden');
+    document.querySelectorAll('.nav-btn').forEach(b => {
+        b.classList.remove('text-accent', 'active');
+        b.classList.add('text-gray-400');
+    });
+    const active = $(`nav-${viewName}`);
+    if (active) {
+        active.classList.add('text-accent', 'active');
+        active.classList.remove('text-gray-400');
+    }
+    localStorage.setItem('pulse_view', viewName);
+}
+
+function toggleTheme() {
+    document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+}
+
+function toggleSettings() {
+    const panel = $('settings-panel');
+    if (panel) panel.classList.toggle('hidden');
+}
+
+// ============================
+// 18. تحميل المزيد
+// ============================
+
+function updateLoadMoreButton() {
+    const container = $('load-more-container');
+    if (!container) return;
+    if (renderedPosts.size >= MAX_RENDERED_POSTS) {
+        container.classList.remove('hidden');
+    } else {
+        container.classList.add('hidden');
+    }
+}
+
+async function loadMorePosts() {
+    if (loadingMore) return;
+    const container = $('load-more-container');
+    if (!container) return;
+    const spinner = $('loading-more-spinner');
+    if (spinner) spinner.classList.remove('hidden');
+
+    loadingMore = true;
+    try {
+        // تحديد أقدم منشور معروض
+        const cards = document.querySelectorAll('.post-card');
+        if (!cards.length) { loadingMore = false; if (spinner) spinner.classList.add('hidden'); return; }
+        let oldest = Infinity;
+        for (const card of cards) {
+            const id = card.dataset.postId;
+            const data = postContentMap.get(id);
+            if (data?.created_at && data.created_at < oldest) oldest = data.created_at;
+        }
+        if (oldest === Infinity) { loadingMore = false; if (spinner) spinner.classList.add('hidden'); return; }
+
+        // جلب منشورات أقدم
+        const sub = pool.subscribeMany(RELAYS, [{ kinds: [1], '#t': [APP_TAG], until: oldest, limit: 100 }], {
+            onevent: event => {
+                if (!event?.id) return;
+                if (event.kind === 5) { handleDeleteEvent(event); return; }
+                if (isReplyEvent(event)) {
+                    handleIncomingReply(event);
+                    return;
+                }
+                if (seenEvents.has(event.id)) return;
+                seenEvents.add(event.id);
+                initPostState(event.id, event.created_at);
+                updatePostScore(event.id);
+                postContentMap.set(event.id, { content: event.content, created_at: event.created_at });
+                renderPost(event);
+                reorderFeed();
+                scheduleReactionResubscribe();
+            },
+            oneose: () => {
+                loadingMore = false;
+                if (spinner) spinner.classList.add('hidden');
+                updateLoadMoreButton();
+                // معالجة الردود المعلقة
+                processAllPendingReplies();
+            },
+            onclose: () => { loadingMore = false; if (spinner) spinner.classList.add('hidden'); }
+        });
+    } catch (e) {
+        loadingMore = false;
+        if (spinner) spinner.classList.add('hidden');
+        showToast('فشل تحميل المزيد: ' + getErrorMessage(e), 'error');
+    }
+}
+
+// ============================
+// 19. Boot
+// ============================
+
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('[Pulse] بدء التشغيل');
+    if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+    }
+    await initIdentity();
+    loadMyProfile();
+    startFeed();
+    startRoomDirectory();
+    const savedView = localStorage.getItem('pulse_view') || 'timeline';
+    switchView(savedView);
+    const savedRoom = localStorage.getItem('active_room');
+    if (savedRoom) {
+        switchView('rooms');
+        setTimeout(restoreRoomAfterRefresh, 1200);
+    }
+});
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(() => console.log('[SW] Registered'))
+            .catch(e => console.warn('[SW] Failed:', e));
+    });
+}
+
+// ربط الدوال للنطاق العام
+window.publishPost = publishPost;
+window.likePost = likePost;
+window.replyToPost = replyToPost;
+window.replyToComment = replyToComment;
+window.confirmReply = confirmReply;
+window.closeReplyModal = closeReplyModal;
+window.toggleRoom = toggleRoom;
+window.toggleMute = toggleMute;
+window.joinDiscoveredRoom = joinDiscoveredRoom;
+window.switchView = switchView;
+window.toggleTheme = toggleTheme;
+window.toggleSettings = toggleSettings;
+window.exportKey = exportKey;
+window.importKey = importKey;
+window.copyNpub = copyNpub;
+window.openProfileModal = openProfileModal;
+window.closeProfileModal = closeProfileModal;
+window.saveProfile = saveProfile;
+window.onAvatarSelected = onAvatarSelected;
+window.onBannerSelected = onBannerSelected;
+window.removeBanner = removeBanner;
+window.onProfileNameInput = onProfileNameInput;
+window.onProfileAboutInput = onProfileAboutInput;
+window.showToast = showToast;
+window.deletePost = deletePost;
+window.editPost = editPost;
+window.closeEditModal = closeEditModal;
+window.confirmEdit = confirmEdit;
+window.triggerFileUpload = triggerFileUpload;
+window.handleFileSelect = handleFileSelect;
+window.removeAttachment = removeAttachment;
+window.toggleReplies = toggleReplies;
+window.triggerEditFileUpload = triggerEditFileUpload;
+window.handleEditFileSelect = handleEditFileSelect;
+window.removeEditAttachment = removeEditAttachment;
+window.loadMorePosts = loadMorePosts;
