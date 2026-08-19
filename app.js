@@ -45,6 +45,18 @@ const postContentMap = new Map();     // postId -> { content, created_at }
 
 let postsSubscription = null;
 let reactionsSubscription = null;
+let reactionResubscribeTimer = null;
+
+// يعيد فتح اشتراك التفاعلات (إعجابات/ردود) ليشمل أي منشورات جديدة ظهرت على الشاشة.
+// بدون هذا، كانت المنشورات التي تصل بعد التحميل الأول لا يتم الاشتراك في تفاعلاتها
+// أبدًا فيفضل عداد الإعجاب عندها صفر حتى تعمل تحديث للصفحة.
+function scheduleReactionResubscribe() {
+    if (reactionResubscribeTimer) clearTimeout(reactionResubscribeTimer);
+    reactionResubscribeTimer = setTimeout(() => {
+        reactionResubscribeTimer = null;
+        startReactionSubscription();
+    }, 700);
+}
 
 // الغرف الصوتية
 const discoveredRooms = new Map();
@@ -647,15 +659,26 @@ function reorderFeed() {
 function renderMediaContent(content) {
     if (!content) return '';
 
-    // 1. استبدال الروابط بوسوم HTML (بدون escapeHtml)
+    // 1. استبدال الروابط بوسوم HTML عبر أماكن محجوزة (placeholders)
+    //    السبب: لو حولنا الرابط مباشرة لـ <img src="URL">، وبعدين شغّلنا
+    //    قاعدة "الروابط العامة" على نفس النص، هي هتلاقي نفس الرابط تاني
+    //    (لأنه لسه موجود جوه src="...") وهتحوله لوسم <a> جوه الـ src نفسه
+    //    فيبوظ الـ HTML بالكامل ولا الصورة ولا الفيديو يتعرضوا.
+    //    الحل: نستبدل كل وسائط بمفتاح مؤقت، ونشغل باقي القواعد، وفي الآخر نرجّع الوسوم الحقيقية.
     let html = content;
+    const placeholders = [];
+    const stash = (tagHtml) => {
+        const token = `\u0000MEDIA${placeholders.length}\u0000`;
+        placeholders.push(tagHtml);
+        return token;
+    };
 
     // 1.1 الصور (jpg, jpeg, png, gif, webp, svg, bmp, ico) مع معاملات اختيارية
     html = html.replace(
         /(https?:\/\/[^\s<>"']+\.(jpe?g|png|gif|webp|svg|bmp|ico)(\?[^\s<>"']*)?)/gi,
         (match) => {
             const safeUrl = match.replace(/&/g, '&amp;');
-            return `<img src="${safeUrl}" alt="صورة" class="max-w-full rounded-xl my-2 max-h-[500px] object-contain border border-gray-200 dark:border-gray-700 shadow-sm cursor-pointer" loading="lazy" onclick="window.open('${safeUrl}', '_blank')" onerror="this.style.display='none'" />`;
+            return stash(`<img src="${safeUrl}" alt="صورة" class="max-w-full rounded-xl my-2 max-h-[500px] object-contain border border-gray-200 dark:border-gray-700 shadow-sm cursor-pointer" loading="lazy" onclick="window.open('${safeUrl}', '_blank')" onerror="this.style.display='none'" />`);
         }
     );
 
@@ -664,27 +687,30 @@ function renderMediaContent(content) {
         /(https?:\/\/[^\s<>"']+\.(mp4|webm|mov|avi|mkv|ogg)(\?[^\s<>"']*)?)/gi,
         (match) => {
             const safeUrl = match.replace(/&/g, '&amp;');
-            return `<video src="${safeUrl}" controls class="max-w-full rounded-xl my-2 max-h-[500px] w-full border border-gray-200 dark:border-gray-700 shadow-sm" preload="metadata" playsinline></video>`;
+            return stash(`<video src="${safeUrl}" controls class="max-w-full rounded-xl my-2 max-h-[500px] w-full border border-gray-200 dark:border-gray-700 shadow-sm" preload="metadata" playsinline></video>`);
         }
     );
 
     // 1.3 YouTube
     html = html.replace(
         /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/gi,
-        (_, vid) => `<iframe class="w-full rounded-xl my-2 aspect-video border border-gray-200 dark:border-gray-700 shadow-sm" src="https://www.youtube.com/embed/${vid}" frameborder="0" allowfullscreen loading="lazy"></iframe>`
+        (_, vid) => stash(`<iframe class="w-full rounded-xl my-2 aspect-video border border-gray-200 dark:border-gray-700 shadow-sm" src="https://www.youtube.com/embed/${vid}" frameborder="0" allowfullscreen loading="lazy"></iframe>`)
     );
 
     // 1.4 Vimeo
     html = html.replace(
         /(?:https?:\/\/)?(?:www\.)?vimeo\.com\/(\d+)/gi,
-        (_, id) => `<iframe class="w-full rounded-xl my-2 aspect-video border border-gray-200 dark:border-gray-700 shadow-sm" src="https://player.vimeo.com/video/${id}" frameborder="0" allowfullscreen loading="lazy"></iframe>`
+        (_, id) => stash(`<iframe class="w-full rounded-xl my-2 aspect-video border border-gray-200 dark:border-gray-700 shadow-sm" src="https://player.vimeo.com/video/${id}" frameborder="0" allowfullscreen loading="lazy"></iframe>`)
     );
 
-    // 1.5 الروابط العامة (غير المحولة) مع استثناء الروابط داخل وسوم
+    // 1.5 الروابط العامة المتبقية (الوسائط أعلاه بقت placeholders فمش هتتلمس هنا)
     html = html.replace(
-        /(https?:\/\/[^\s<>"']+)(?![^<]*<\/?(?:img|video|iframe)>)/gi,
+        /(https?:\/\/[^\s<>"']+)/gi,
         (match) => `<a href="${match}" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">${match}</a>`
     );
+
+    // 1.6 رجّع وسوم الوسائط الحقيقية مكان الـ placeholders
+    html = html.replace(/\u0000MEDIA(\d+)\u0000/g, (_, i) => placeholders[Number(i)]);
 
     // 2. التنقية باستخدام DOMPurify
     if (typeof DOMPurify !== 'undefined') {
@@ -723,6 +749,7 @@ function startFeed() {
                 postContentMap.set(event.id, { content: event.content, created_at: event.created_at });
                 renderPost(event);
                 reorderFeed();
+                scheduleReactionResubscribe();
             },
             oneose: () => {
                 console.log('[Feed] تم التحميل الأولي');
@@ -931,8 +958,51 @@ async function confirmEdit() {
 // 12. نشر منشور مع رفع الملفات
 // ============================
 
+// المرفقات المعلّقة لمنشور جديد (لسه ما اتنشرش) — { url, type }
+// بنخزنها بره مربع الكتابة عشان المستخدم ميشوفش أي رابط نصي أبدًا،
+// وبنعرضها كمعاينة صور/فيديو مصغّرة زي تويتر.
+let pendingAttachments = [];
+
 function triggerFileUpload() {
     document.getElementById('file-input')?.click();
+}
+
+function isVideoAttachment(att) {
+    if (att.type?.startsWith('video/')) return true;
+    return /\.(mp4|webm|mov|avi|mkv|ogg)(\?.*)?$/i.test(att.url || '');
+}
+
+function renderAttachmentPreviews() {
+    const wrap = $('attachment-preview');
+    if (!wrap) return;
+    if (!pendingAttachments.length) {
+        wrap.innerHTML = '';
+        wrap.classList.add('hidden');
+        return;
+    }
+    wrap.classList.remove('hidden');
+    wrap.innerHTML = pendingAttachments.map((att, i) => {
+        const video = isVideoAttachment(att);
+        const media = video
+            ? `<video src="${att.url}" class="w-full h-full object-cover pointer-events-none" muted></video>`
+            : `<img src="${att.url}" class="w-full h-full object-cover pointer-events-none" alt="معاينة مرفق" />`;
+        return `
+            <div class="relative w-20 h-20 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 flex-shrink-0 bg-gray-100 dark:bg-gray-800">
+                ${media}
+                <button type="button" onclick="removeAttachment(${i})"
+                        class="absolute top-1 left-1 w-5 h-5 bg-black/60 text-white rounded-full flex items-center justify-center text-[10px] hover:bg-black/80 transition"
+                        title="إزالة المرفق">
+                    <i class="fas fa-times"></i>
+                </button>
+                ${video ? '<div class="absolute bottom-1 right-1 text-white text-[10px] bg-black/60 rounded px-1"><i class="fas fa-video"></i></div>' : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+function removeAttachment(index) {
+    pendingAttachments.splice(index, 1);
+    renderAttachmentPreviews();
 }
 
 async function handleFileSelect(event) {
@@ -940,23 +1010,26 @@ async function handleFileSelect(event) {
     if (!files || files.length === 0) return;
     showToast('جاري رفع الملفات...', 'info');
     const uploaded = await uploadFiles(Array.from(files));
-    if (uploaded.length === 0) { showToast('فشل رفع الملفات', 'error'); return; }
-    const input = $('post-input');
-    if (input) {
-        let text = input.value;
-        uploaded.forEach(item => { text += `\n${item.url}`; });
-        input.value = text.trim();
-    }
     event.target.value = '';
+    if (uploaded.length === 0) { showToast('فشل رفع الملفات', 'error'); return; }
+    // بنضيف المرفقات لقائمة منفصلة وبنعرض معاينة مصغّرة بدل ما نكتب الرابط في المربع
+    pendingAttachments.push(...uploaded);
+    renderAttachmentPreviews();
     showToast(`تم رفع ${uploaded.length} ملف(ات)`, 'success');
 }
 
 async function publishPost() {
     const input = $('post-input');
     if (!input) { showToast('حقل الكتابة غير موجود', 'error'); return; }
-    const content = (input.value || '').trim();
-    if (!content) { showToast('اكتب شيئًا قبل النشر', 'error'); return; }
-    if (content.length > 4000) { showToast('النص طويل جدًا', 'error'); return; }
+    const text = (input.value || '').trim();
+    if (!text && pendingAttachments.length === 0) { showToast('اكتب شيئًا أو أرفق صورة/فيديو قبل النشر', 'error'); return; }
+    if (text.length > 4000) { showToast('النص طويل جدًا', 'error'); return; }
+
+    // نبني محتوى الحدث النهائي بدمج النص مع روابط المرفقات (الروابط دي هي اللي
+    // بتتحول لصور/فيديو فعلي عند العرض عبر renderMediaContent) — لكن المستخدم
+    // شافها كصور مصغّرة فقط، مش كنص رابط، طول ما هو بيكتب المنشور.
+    const mediaUrls = pendingAttachments.map(a => a.url);
+    const content = [text, ...mediaUrls].filter(Boolean).join('\n');
 
     try {
         const event = await signEvent({ kind: 1, created_at: Math.floor(Date.now() / 1000), tags: [['t', APP_TAG]], content });
@@ -967,9 +1040,12 @@ async function publishPost() {
             updatePostScore(event.id);
             renderPost(event);
             reorderFeed();
+            scheduleReactionResubscribe();
         }
         await pool.publish(RELAYS, event);
         input.value = '';
+        pendingAttachments = [];
+        renderAttachmentPreviews();
         showToast('تم النشر بنجاح', 'success');
     } catch (error) {
         showToast('فشل النشر: ' + getErrorMessage(error), 'error');
@@ -1093,20 +1169,52 @@ function getTagValue(tags, name) {
     return tag ? tag[1] : null;
 }
 
+// يحدد المنشور الأصلي (root) والتعليق الأب المباشر (reply) لحدث معين
+// بالاعتماد على علامات NIP-10 (['e', id, relay, 'root'|'reply']).
+// لردود المنشور المباشرة (تاج e واحد فقط بدون علامة root) يُعتبر هو نفسه الجذر.
+function getReplyTargets(tags) {
+    if (!Array.isArray(tags)) return { rootId: null, parentId: null };
+    const eTags = tags.filter(t => t[0] === 'e' && t[1]);
+    if (!eTags.length) return { rootId: null, parentId: null };
+    const rootTag = eTags.find(t => t[3] === 'root');
+    const replyTag = eTags.find(t => t[3] === 'reply');
+    if (rootTag) {
+        return { rootId: rootTag[1], parentId: replyTag ? replyTag[1] : rootTag[1] };
+    }
+    // لا توجد علامات — رد مباشر على منشور (تاج e واحد)
+    return { rootId: eTags[0][1], parentId: eTags[0][1] };
+}
+
 function handleIncomingReply(event) {
-    const targetId = getTagValue(event.tags, 'e');
-    if (!targetId) return;
-    const stats = getReactionStats(targetId);
+    const { rootId, parentId } = getReplyTargets(event.tags);
+    if (!rootId) return;
+    const stats = getReactionStats(rootId);
     if (!stats) return;
     if (document.querySelector(`[data-reply-id="${CSS.escape(event.id)}"]`)) return;
 
-    const postStat = postStats.get(targetId);
-    if (postStat) { postStat.replies += 1; updatePostScore(targetId); }
+    const postStat = postStats.get(rootId);
+    if (postStat) { postStat.replies += 1; updatePostScore(rootId); }
     const replyCount = Number(stats.replyCount.dataset.count || 0);
     stats.replyCount.dataset.count = String(replyCount + 1);
     stats.replyCount.textContent = String(replyCount + 1);
 
-    const container = stats.card.querySelector(`[data-replies="${CSS.escape(targetId)}"]`);
+    // لو الرد على تعليق فرعي (مش على المنشور مباشرة)، نحطه متداخل جوه التعليق الأب
+    // (زي فيسبوك)؛ لو التعليق الأب لسه مش ظاهر في الصفحة، نرجعله للحاوية الرئيسية كـ fallback
+    let container = null;
+    if (parentId && parentId !== rootId) {
+        const parentComment = document.querySelector(`[data-reply-id="${CSS.escape(parentId)}"]`);
+        if (parentComment) {
+            container = parentComment.querySelector('.nested-replies');
+            if (!container) {
+                container = document.createElement('div');
+                container.className = 'nested-replies mt-2 space-y-2 mr-4 border-r-2 border-accent/20 pr-3';
+                parentComment.appendChild(container);
+            }
+        }
+    }
+    if (!container) {
+        container = stats.card.querySelector(`[data-replies="${CSS.escape(rootId)}"]`);
+    }
     if (!container) return;
 
     const reply = document.createElement('div');
@@ -1118,7 +1226,7 @@ function handleIncomingReply(event) {
             <span class="text-xs font-bold text-gray-700 dark:text-gray-300">${escapeHtml(getDisplayName(event.pubkey))}</span>
         </div>
         <div class="text-gray-700 dark:text-gray-200 mr-2">${escapeHtml(event.content)}</div>
-        <button onclick="replyToComment('${event.id}', '${targetId}', '${event.pubkey}')" class="text-xs text-accent hover:underline mt-1 mr-2"><i class="fas fa-reply"></i> رد</button>
+        <button onclick="replyToComment('${event.id}', '${rootId}', '${event.pubkey}')" class="text-xs text-accent hover:underline mt-1 mr-2"><i class="fas fa-reply"></i> رد</button>
     `;
     container.appendChild(reply);
     fetchProfiles([event.pubkey]);
@@ -1714,3 +1822,4 @@ window.closeEditModal = closeEditModal;
 window.confirmEdit = confirmEdit;
 window.triggerFileUpload = triggerFileUpload;
 window.handleFileSelect = handleFileSelect;
+window.removeAttachment = removeAttachment;
