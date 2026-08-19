@@ -1,8 +1,7 @@
 /* =========================================================
    Pulse - التطبيق الرئيسي (نسخة محسّنة)
    نظام Nostr + المنشورات + غرف الصوت WebRTC
-   الخوارزمية: ترتيب ديناميكي بالوزن (Edge-like)
-   + حذف وتعديل المنشورات (kind 5 و update)
+   خوارزمية ترتيب ديناميكي + حذف وتعديل + إعجاب/إلغاء إعجاب + وسائط
    ========================================================= */
 
 const RELAYS = [
@@ -18,7 +17,6 @@ const MAX_SEEN_EVENTS = 5000;
 const MAX_RENDERED_POSTS = 150;
 const MAX_DISCOVERED_ROOMS = 50;
 
-// اكتشاف الغرف الحية
 const DISCOVERY_TAG = APP_TAG + ':room-directory';
 const ROOM_PRESENCE_TTL_MS = 90 * 1000;
 
@@ -39,7 +37,7 @@ const seenEvents = new Set();
 const renderedPosts = new Map();      // postId -> HTMLElement
 const postScores = new Map();         // postId -> number (score)
 const profileCache = new Map();
-const postStats = new Map();          // postId -> { likes, replies, createdAt }
+const postStats = new Map();          // postId -> { likes, replies, createdAt, myLikeEventId? }
 const postContentMap = new Map();     // postId -> { content, created_at }
 
 let postsSubscription = null;
@@ -425,7 +423,7 @@ async function buildNip98AuthHeader(url, method) {
     return `Nostr ${base64}`;
 }
 
-async function uploadImageToNostrBuild(file) {
+async function uploadFileToNostrBuild(file) {
     const uploadUrl = 'https://nostr.build/api/v2/upload/files';
     const form = new FormData();
     form.append('file[]', file);
@@ -445,9 +443,9 @@ async function uploadImageToNostrBuild(file) {
 
     if (!res.ok) {
         if (res.status === 401) {
-            throw new Error('رفض السيرفر رفع الصورة (401) — تأكد من هويتك وحاول تاني');
+            throw new Error('رفض السيرفر رفع الملف (401) — تأكد من هويتك وحاول تاني');
         }
-        throw new Error('فشل رفع الصورة (' + res.status + ')');
+        throw new Error('فشل رفع الملف (' + res.status + ')');
     }
 
     const data = await res.json();
@@ -462,6 +460,21 @@ async function uploadImageToNostrBuild(file) {
         throw new Error('لم يُرجع سيرفر الصور رابطًا صالحًا');
     }
     return url;
+}
+
+// دالة رفع متعددة الملفات
+async function uploadFiles(files) {
+    const urls = [];
+    for (const file of files) {
+        try {
+            const url = await uploadFileToNostrBuild(file);
+            urls.push({ url, type: file.type });
+        } catch (e) {
+            console.warn('[Upload] فشل رفع ملف:', e);
+            showToast('فشل رفع أحد الملفات', 'error');
+        }
+    }
+    return urls;
 }
 
 function setUploadStatus(text, isError) {
@@ -642,13 +655,13 @@ async function saveProfile() {
         if (pendingAvatarFile) {
             setUploadStatus('جاري رفع الصورة الشخصية...');
             const compressed = await compressImage(pendingAvatarFile, 400, 0.85);
-            pictureUrl = await uploadImageToNostrBuild(compressed);
+            pictureUrl = await uploadFileToNostrBuild(compressed);
         }
 
         if (pendingBannerFile) {
             setUploadStatus('جاري رفع صورة الغلاف...');
             const compressed = await compressImage(pendingBannerFile, 1500, 0.82);
-            bannerUrl = await uploadImageToNostrBuild(compressed);
+            bannerUrl = await uploadFileToNostrBuild(compressed);
         }
 
         setUploadStatus('جاري حفظ الملف على Nostr...');
@@ -879,7 +892,7 @@ function reorderFeed() {
 }
 
 /* =========================================================
-   المنشورات - مع إضافة الحذف والتعديل
+   المنشورات - مع الحذف والتعديل والوسائط
    ========================================================= */
 
 function startFeed() {
@@ -916,7 +929,8 @@ function startFeed() {
                     postStats.set(event.id, {
                         likes: 0,
                         replies: 0,
-                        createdAt: event.created_at
+                        createdAt: event.created_at,
+                        myLikeEventId: null   // لتخزين معرف حدث الإعجاب الخاص بي
                     });
                     updatePostScore(event.id);
 
@@ -954,6 +968,25 @@ function getPostCard(postId) {
     return document.querySelector(`.post-card[data-post-id="${CSS.escape(postId)}"]`);
 }
 
+// دالة لتحويل نص المنشور لعرض الصور والفيديو
+function renderMediaContent(content) {
+    // البحث عن روابط الصور والفيديو وتحويلها إلى وسم HTML
+    let html = escapeHtml(content);
+    // تحويل روابط الصور (تنتهي بـ .jpg, .png, .gif, .webp)
+    html = html.replace(/(https?:\/\/[^\s]+\.(jpe?g|png|gif|webp)(\?[^\s]*)?)/gi, (match) => {
+        return `<img src="${match}" alt="صورة" class="max-w-full rounded-lg my-2 max-h-96 object-contain" loading="lazy" />`;
+    });
+    // تحويل روابط الفيديو (تنتهي بـ .mp4, .webm, .mov)
+    html = html.replace(/(https?:\/\/[^\s]+\.(mp4|webm|mov)(\?[^\s]*)?)/gi, (match) => {
+        return `<video src="${match}" controls class="max-w-full rounded-lg my-2 max-h-96" preload="metadata"></video>`;
+    });
+    // تحويل الروابط العامة إلى روابط قابلة للنقر
+    html = html.replace(/(https?:\/\/[^\s]+)/g, (match) => {
+        return `<a href="${match}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">${match}</a>`;
+    });
+    return html;
+}
+
 function renderPost(event) {
     const container = $('feed-container');
     if (!container) return;
@@ -974,6 +1007,9 @@ function renderPost(event) {
         'post-card bg-white dark:bg-surface rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-800 fade-in';
     div.dataset.postId = event.id;
     div.dataset.author = event.pubkey;
+
+    // استخدام renderMediaContent لعرض الوسائط
+    const contentHtml = renderMediaContent(event.content);
 
     div.innerHTML = `
         <div class="flex justify-between items-start mb-3">
@@ -1006,15 +1042,16 @@ function renderPost(event) {
             ` : ''}
         </div>
 
-        <p class="post-content text-gray-800 dark:text-gray-200 leading-relaxed mb-4 whitespace-pre-wrap text-sm md:text-base">
-            ${escapeHtml(event.content)}
-        </p>
+        <div class="post-content text-gray-800 dark:text-gray-200 leading-relaxed mb-4 whitespace-pre-wrap text-sm md:text-base">
+            ${contentHtml}
+        </div>
 
         <div class="flex items-center gap-6 text-gray-400 text-sm border-t border-gray-100 dark:border-gray-800 pt-3">
             <button
                 class="like-button flex items-center gap-2 hover:text-red-500 transition"
                 onclick="likePost('${event.id}', '${event.pubkey}')"
                 data-liked="false"
+                data-postid="${event.id}"
             >
                 <i class="far fa-heart"></i>
                 <span>إعجاب</span>
@@ -1078,10 +1115,41 @@ function handleDeleteEvent(event) {
     const targetId = getTagValue(event.tags, 'e');
     if (!targetId) return;
 
+    // التحقق إذا كان الهدف منشوراً
     if (renderedPosts.has(targetId)) {
         const card = getPostCard(targetId);
         if (card && card.dataset.author === event.pubkey) {
             removePostFromUI(targetId);
+        }
+        return;
+    }
+
+    // التحقق إذا كان الهدف إعجاباً (لإلغاء الإعجاب)
+    // نبحث في postStats عن منشور يحتوي على myLikeEventId يساوي targetId
+    for (const [postId, stats] of postStats) {
+        if (stats.myLikeEventId === targetId) {
+            // هذا يعني أن المستخدم ألغى إعجابه بهذا المنشور
+            stats.likes = Math.max(0, stats.likes - 1);
+            stats.myLikeEventId = null;
+            updatePostScore(postId);
+            // تحديث واجهة الإعجاب
+            const card = getPostCard(postId);
+            if (card) {
+                const likeBtn = card.querySelector('.like-button');
+                if (likeBtn) {
+                    likeBtn.dataset.liked = 'false';
+                    const icon = likeBtn.querySelector('i');
+                    if (icon) icon.className = 'far fa-heart';
+                    likeBtn.classList.remove('text-red-500', 'font-bold');
+                }
+                const countEl = card.querySelector('.like-count');
+                if (countEl) {
+                    countEl.dataset.count = String(stats.likes);
+                    countEl.textContent = String(stats.likes);
+                }
+            }
+            reorderFeed();
+            break;
         }
     }
 }
@@ -1139,56 +1207,75 @@ async function confirmEdit() {
         return;
     }
 
-    const originalData = postContentMap.get(editingPostId);
+    const oldPostId = editingPostId;
+    const originalData = postContentMap.get(oldPostId);
     if (!originalData) {
         showToast('المنشور الأصلي غير موجود', 'error');
         return;
     }
 
     try {
-        const eventTemplate = {
+        // 1. حذف المنشور القديم
+        const deleteEvent = {
+            kind: 5,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [['e', oldPostId]],
+            content: ''
+        };
+        const signedDelete = await signEvent(deleteEvent);
+        await pool.publish(RELAYS, signedDelete);
+
+        // 2. نشر منشور جديد بدون وسم e (حتى لا يظهر كرد)
+        const newEventTemplate = {
             kind: 1,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [
-                ['t', APP_TAG],
-                ['e', editingPostId, '', 'replaceable']
-            ],
+            tags: [['t', APP_TAG]],
             content: newContent
         };
+        const signedNew = await signEvent(newEventTemplate);
+        await pool.publish(RELAYS, signedNew);
 
-        const signedEvent = await signEvent(eventTemplate);
-        await pool.publish(RELAYS, signedEvent);
+        // 3. تحديث الواجهة: استبدال البطاقة القديمة بالجديدة
+        const oldCard = getPostCard(oldPostId);
+        if (oldCard) {
+            // نزيل البطاقة القديمة
+            oldCard.remove();
+            renderedPosts.delete(oldPostId);
+            postStats.delete(oldPostId);
+            postScores.delete(oldPostId);
+            postContentMap.delete(oldPostId);
+            seenEvents.delete(oldPostId);
 
-        const card = getPostCard(editingPostId);
-        if (card) {
-            const contentEl = card.querySelector('.post-content');
-            if (contentEl) {
-                contentEl.textContent = newContent;
-                postContentMap.set(editingPostId, {
-                    content: newContent,
-                    created_at: signedEvent.created_at
-                });
-                const stats = postStats.get(editingPostId);
-                if (stats) {
-                    stats.createdAt = signedEvent.created_at;
-                    updatePostScore(editingPostId);
-                    reorderFeed();
-                }
-                showToast('تم تعديل المنشور ✅', 'success');
-            }
-        } else {
-            seenEvents.add(signedEvent.id);
-            postStats.set(signedEvent.id, {
+            // نضيف المنشور الجديد
+            postStats.set(signedNew.id, {
                 likes: 0,
                 replies: 0,
-                createdAt: signedEvent.created_at
+                createdAt: signedNew.created_at,
+                myLikeEventId: null
             });
-            updatePostScore(signedEvent.id);
-            postContentMap.set(signedEvent.id, {
-                content: newContent,
-                created_at: signedEvent.created_at
+            updatePostScore(signedNew.id);
+            postContentMap.set(signedNew.id, {
+                content: signedNew.content,
+                created_at: signedNew.created_at
             });
-            renderPost(signedEvent);
+            renderPost(signedNew);
+            reorderFeed();
+            showToast('تم تعديل المنشور ✅', 'success');
+        } else {
+            // في حالة عدم وجود البطاقة (نادراً) نضيف المنشور الجديد مباشرة
+            seenEvents.add(signedNew.id);
+            postStats.set(signedNew.id, {
+                likes: 0,
+                replies: 0,
+                createdAt: signedNew.created_at,
+                myLikeEventId: null
+            });
+            updatePostScore(signedNew.id);
+            postContentMap.set(signedNew.id, {
+                content: signedNew.content,
+                created_at: signedNew.created_at
+            });
+            renderPost(signedNew);
             reorderFeed();
             showToast('تم التعديل ونشر نسخة جديدة', 'success');
         }
@@ -1201,8 +1288,46 @@ async function confirmEdit() {
 }
 
 /* =========================================================
-   نشر منشور
+   نشر منشور مع دعم رفع الملفات
    ========================================================= */
+
+// متغير لتخزين الملفات المرفوعة مؤقتاً
+let pendingUploadFiles = [];
+
+function triggerFileUpload() {
+    document.getElementById('file-input')?.click();
+}
+
+async function handleFileSelect(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    // رفع الملفات فوراً
+    showToast('جاري رفع الملفات...', 'info');
+    const uploaded = await uploadFiles(Array.from(files));
+    if (uploaded.length === 0) {
+        showToast('فشل رفع الملفات', 'error');
+        return;
+    }
+
+    // إضافة روابط الملفات إلى حقل النص
+    const input = $('post-input');
+    if (input) {
+        let text = input.value;
+        uploaded.forEach(item => {
+            if (item.type.startsWith('image/')) {
+                text += `\n${item.url}`; // سيتم عرضها كصورة تلقائياً
+            } else if (item.type.startsWith('video/')) {
+                text += `\n${item.url}`;
+            } else {
+                text += `\n${item.url}`; // روابط عامة
+            }
+        });
+        input.value = text.trim();
+    }
+    event.target.value = ''; // إعادة تعيين الإدخال
+    showToast(`تم رفع ${uploaded.length} ملف(ات)`, 'success');
+}
 
 async function publishPost() {
     const input = $('post-input');
@@ -1211,7 +1336,7 @@ async function publishPost() {
         return;
     }
 
-    const content = (input.value || '').trim();
+    let content = (input.value || '').trim();
     if (!content) {
         showToast('اكتب شيئًا قبل النشر', 'error');
         return;
@@ -1236,7 +1361,8 @@ async function publishPost() {
             postStats.set(signedEvent.id, {
                 likes: 0,
                 replies: 0,
-                createdAt: signedEvent.created_at
+                createdAt: signedEvent.created_at,
+                myLikeEventId: null
             });
             postContentMap.set(signedEvent.id, {
                 content: signedEvent.content,
@@ -1257,7 +1383,7 @@ async function publishPost() {
 }
 
 /* =========================================================
-   الإعجابات والردود
+   الإعجابات والردود مع إلغاء الإعجاب
    ========================================================= */
 
 function getReactionStats(postId) {
@@ -1298,21 +1424,41 @@ async function likePost(targetId, targetPubkey) {
         showToast('تعذر العثور على المنشور', 'error');
         return;
     }
+
+    const postStat = postStats.get(targetId);
+    if (!postStat) return;
+
+    // إذا كان المستخدم معجباً بالفعل (data-liked === 'true') => إلغاء الإعجاب
     if (stats.likeButton.dataset.liked === 'true') {
-        showToast('لقد أعجبت بهذا المنشور بالفعل', 'info');
+        // إلغاء الإعجاب
+        if (postStat.myLikeEventId) {
+            try {
+                // نشر حدث حذف للإعجاب (kind 5)
+                const deleteEvent = {
+                    kind: 5,
+                    created_at: Math.floor(Date.now() / 1000),
+                    tags: [['e', postStat.myLikeEventId]],
+                    content: ''
+                };
+                const signedDelete = await signEvent(deleteEvent);
+                await pool.publish(RELAYS, signedDelete);
+
+                // تحديث محلي
+                postStat.likes = Math.max(0, postStat.likes - 1);
+                postStat.myLikeEventId = null;
+                updatePostScore(targetId);
+                updateLikeUI(targetId, false, -1);
+                reorderFeed();
+                showToast('تم إلغاء الإعجاب', 'info');
+            } catch (error) {
+                console.error('[Unlike] فشل:', error);
+                showToast('فشل إلغاء الإعجاب: ' + getErrorMessage(error), 'error');
+            }
+        }
         return;
     }
 
-    const postStat = postStats.get(targetId);
-    if (postStat) {
-        postStat.likes += 1;
-        updatePostScore(targetId);
-    }
-    updateLikeUI(targetId, true, 1);
-    stats.likeButton.classList.add('scale-110');
-    setTimeout(() => stats.likeButton.classList.remove('scale-110'), 180);
-    reorderFeed();
-
+    // إعجاب جديد
     try {
         const eventTemplate = {
             kind: 7,
@@ -1326,16 +1472,19 @@ async function likePost(targetId, targetPubkey) {
 
         const signedEvent = await signEvent(eventTemplate);
         await pool.publish(RELAYS, signedEvent);
+
+        // تحديث محلي
+        postStat.likes += 1;
+        postStat.myLikeEventId = signedEvent.id;
+        updatePostScore(targetId);
+        updateLikeUI(targetId, true, 1);
+        stats.likeButton.classList.add('scale-110');
+        setTimeout(() => stats.likeButton.classList.remove('scale-110'), 180);
+        reorderFeed();
         showToast('تم الإعجاب ❤️', 'success');
     } catch (error) {
         console.error('[Like] فشل:', error);
-        if (postStat) {
-            postStat.likes -= 1;
-            updatePostScore(targetId);
-        }
-        updateLikeUI(targetId, false, -1);
-        reorderFeed();
-        showToast('فشل إرسال الإعجاب: ' + getErrorMessage(error), 'error');
+        showToast('فشل الإعجاب: ' + getErrorMessage(error), 'error');
     }
 }
 
@@ -1376,7 +1525,7 @@ function handleIncomingLike(event) {
 
     const stats = getReactionStats(targetId);
     if (!stats) return;
-    if (event.pubkey === pk) return;
+    if (event.pubkey === pk) return; // تجاهل إعجاباتي (تم التعامل معها محلياً)
 
     const postStat = postStats.get(targetId);
     if (postStat) {
@@ -1494,7 +1643,7 @@ async function sendReply(targetId, targetPubkey, cleanContent) {
 }
 
 /* =========================================================
-   غرف الصوت WebRTC
+   غرف الصوت WebRTC (نفسها، بدون تغيير)
    ========================================================= */
 
 const WEBRTC_CONFIG = {
@@ -2344,3 +2493,5 @@ window.deletePost = deletePost;
 window.editPost = editPost;
 window.closeEditModal = closeEditModal;
 window.confirmEdit = confirmEdit;
+window.triggerFileUpload = triggerFileUpload;
+window.handleFileSelect = handleFileSelect;
